@@ -1,0 +1,697 @@
+@import url("https://fonts.googleapis.com/css?family=Roboto:400,400i,700");
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Roboto', sans-serif;
+}
+
+body {
+    /* background-color: #6663f2; */
+    background-color: #ddd;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.bg-light-red {
+    background-color: rgba(239, 227, 229, 0.662) !important;
+    /* color: white; */
+}
+
+#loadingOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+    color: #ffc107;
+}
+
+#navbarNav .btn {
+    background-color: rgb(55, 7, 72);
+    color: white;
+    border: 1px solid rgb(55, 7, 72);
+    border-radius: 0%;
+    font-size: 10px;
+    text-transform: uppercase;
+    zoom: 1;
+}
+
+.content .navbar {
+    padding-left: 0%;
+    border-bottom: 1px solid rgb(177, 174, 174);
+}
+
+.sidebar1 {
+    width: 220px;
+    height: 100%;
+    background-color: #333;
+    color: #fff;
+    position: fixed;
+    top: 0;
+    left: 0;
+    overflow-y: auto;
+}
+
+.sidebar-header {
+    padding: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.toggle-btn {
+    cursor: pointer;
+    margin-right: 10px;
+}
+
+.company-name {
+    font-size: 20px;
+    font-weight: bold;
+    margin-left: 10px;
+}
+
+/* Folder Section */
+.folder-structure {
+    margin-top: 20px;
+    padding-left: 1rem;
+}
+
+.folders {
+    list-style: none;
+    padding-left: 0px;
+}
+
+.folders li {
+    margin-bottom: 15px;
+}
+
+.folders a {
+    color: #fff;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    padding-left: 10px;
+}
+
+.folders a i {
+    margin-right: 10px;
+}
+
+.subfolders {
+    padding-left: 20px;
+}
+
+.tags {
+    margin-top: 10px;
+}
+
+.tag {
+    background-color: #666;
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-right: 5px;
+}
+
+/* Additional Styles */
+.toggle-btn:hover,
+.folders a:hover {
+    color: #ffc107;
+}
+
+.folders a.active {
+    background-color: #ffc107;
+    color: white;
+}
+
+.folder-name {
+    font-weight: bold;
+    text-transform: capitalize !important;
+    font-size: 14px;
+    /* margin-bottom: 1px; */
+}
+
+
+
+.folder-icon {
+    margin-right: 10px;
+}
+
+.tag:hover {
+    background-color: #555;
+}
+
+.profile-section {
+    padding: 20px;
+    border-top: 1px solid #555;
+}
+
+.content {
+    margin-left: 250px;
+    padding: 20px 20px 20px 20px;
+
+}
+
+
+.navbar {
+    background-color: #eee;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+}
+
+.navbar-below {
+    background-color: #f0f0f0;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+}
+
+.card-container {
+    padding: 10px;
+}
+
+.custom-card {
+    background-color: #fff;
+    box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.2);
+    border-radius: 2px;
+    overflow: hidden;
+    /* margin-bottom: 20px; */
+    display: flex;
+}
+
+.custom-card>.img-container {
+    width: 70px;
+    height: auto;
+    display: block;
+    background: #eee;
+    object-fit: contain;
+}
+
+.custom-card>.img-container img {
+    width: 70%;
+    height: 100%;
+    object-fit: scale-down;
+    display: block;
+    margin: 0 auto;
+}
+
+.custom-card>.img-container img:hover,
+.custom-card>.img-container-file img {
+    cursor: zoom-in
+}
+
+
+.custom-card>.img-container-file img {
+    width: 70px;
+    height: 70px;
+    display: block;
+    margin: 0 auto;
+    object-fit: fill;
+}
+
+.card-content {
+    flex: 1;
+    padding: 5px;
+}
+
+.card-title {
+    font-size: 14px;
+    font-weight: bold;
+    /* margin-bottom: 10px; */
+}
+
+.form-check {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.form-check input[type="radio"] {
+    margin-right: 5px;
+}
+
+.date-emojis {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    bottom: 0;
+}
+
+.date,
+.emojis {
+    font-size: 14px;
+}
+
+.document-properties {
+    height: 100%;
+    width: 100%;
+}
+
+.document-properties .card {
+    background-color: rgb(20, 20, 20);
+    height: 100%;
+    border: none;
+}
+
+.document-properties .card>.card-body {
+    background-color: rgb(62, 59, 59);
+    border: none;
+}
+
+/* .document-properties .card>.card-header {
+    height: 150px;
+} */
+
+
+.card-header {
+    position: relative;
+    border: none;
+}
+
+.card-header>.icon,
+.card-header-img>.icon {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background-color: red;
+    /* Adjust as needed */
+    color: white;
+    /* Adjust as needed */
+    padding: 5px;
+    border-radius: 50%;
+    transform: translate(50%, -50%);
+}
+
+.document-properties .card>.card-header img {
+    display: block;
+    margin: 0 auto;
+    width: auto;
+    height: 100px;
+    object-fit: fill;
+    /* filter: invert(100%); */
+    border: none;
+}
+
+.document-properties .card>.card-header-img img {
+    display: block;
+    margin: 0 auto;
+    width: 250px;
+    height: 150px;
+    object-fit: fill;
+    border: none;
+}
+
+.defaultImage {
+    display: block;
+    margin: 0 auto;
+    width: 250px;
+    height: 150px;
+    object-fit: fill;
+    border: none;
+    filter: invert(100%);
+}
+
+
+.document-properties .share-buttons>i {
+    border: 1px solid black;
+    padding: 6px;
+    color: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    /* Adjust shadow properties */
+}
+
+.document-properties input,
+.document-properties select {
+    height: 25px;
+    padding: 0.25rem 0.5rem;
+    font-size: 12px;
+    border-radius: 0 !important;
+    box-sizing: border-box;
+    background-color: #333;
+    /* Background color of the input/select */
+    color: whitesmoke;
+    /* Text color */
+    border: 1px solid #333;
+}
+
+/* Style for select input and focus */
+.document-properties select,
+.document-properties select:focus {
+    background-color: #333;
+    /* Background color */
+    color: whitesmoke;
+    /* Text color */
+    -webkit-appearance: none;
+    /* Remove default appearance for webkit browsers */
+    -moz-appearance: none;
+    /* Remove default appearance for firefox browsers */
+    appearance: none;
+    /* Remove default appearance for other browsers */
+    padding-right: 20px;
+    /* Add padding for dropdown arrow */
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white"><path d="M10 12l-5-5h10l-5 5z" /></svg>');
+    background-repeat: no-repeat;
+    background-position: right center;
+}
+
+.document-properties input:focus,
+.document-properties select:focus {
+    color: whitesmoke;
+    outline: none;
+    /* Remove default focus outline */
+    box-shadow: none;
+    /* Remove box shadow */
+    pointer-events: auto;
+    background-color: #333;
+    /* Allow typing in select */
+    border: 1px solid #333;
+
+}
+
+.document-properties label {
+    font-size: 10px;
+    color: whitesmoke;
+}
+
+.selected {
+    border: 3px solid lightblue;
+    border-left: 0px solid lightblue;
+    /* padding: 0px; */
+}
+
+.addOverlay {
+    position: relative;
+    /* Ensure the overlay stays within its parent container */
+}
+
+.addOverlay::after {
+    content: '';
+    /* Required for the pseudo-element */
+    position: absolute;
+    /* Position the overlay */
+    top: 0;
+    left: 0;
+    width: 100%;
+    /* Cover the entire width of the parent */
+    height: 100%;
+    /* Cover the entire height of the parent */
+    background-color: #333;
+    /* Semi-transparent black overlay */
+    z-index: 1;
+    /* Ensure the overlay is above the content */
+}
+
+.card-content a {
+    text-decoration: none;
+}
+
+#previewModal .modal-dialog {
+    max-width: 65%;
+    margin: auto;
+    border: 0px;
+    border-radius: 0px;
+}
+
+#previewModal .modal-content {
+    width: 100%;
+    /* height: 100%; */
+    border: 0px;
+    border-radius: 0%;
+    background-color: #333;
+}
+
+#previewModal .modal-body {
+    padding: 0;
+}
+
+#previewContent {
+    width: 100%;
+    height: calc(100vh - 130px);
+    overflow: auto;
+}
+
+#previewContent iframe,
+#previewContent video,
+#previewContent audio {
+    width: 100%;
+    height: 80vh;
+}
+
+.pdf-container {
+    width: 100%;
+    height: 100vh;
+}
+
+.pdf-container object {
+    width: 100%;
+    height: 100%;
+}
+
+
+/* Responsive styling for Trix editor */
+.trix-editor {
+    max-width: 100%;
+    /* Ensure the editor does not exceed the width of its container */
+    width: 100%;
+    /* Make the editor fill its container */
+    margin: 0 auto;
+    /* Center the editor horizontally */
+}
+
+/* Adjust font size and line height for better readability on small screens */
+@media screen and (max-width: 768px) {
+    .trix-editor {
+        font-size: 16px;
+        line-height: 1.5;
+    }
+}
+
+/* Style for the custom textarea */
+
+.custom-textarea {
+    width: 100%;
+    min-height: 100px;
+    /* Adjust as needed */
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 0px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+    /* Allow vertical resizing */
+    box-sizing: border-box;
+    /* Include padding and border in the element's total width and height */
+}
+
+.custom-textarea:focus {
+    outline: none;
+    /* Remove outline */
+    border: none;
+    /* Remove border */
+    box-shadow: none;
+    /* Remove box shadow */
+}
+
+
+/* Style for comments */
+
+.commentContent {
+    background-color: #f3f3f3;
+    height: 100%;
+}
+
+.commentContent .card-header>.btn-group {
+    text-decoration: none;
+    font-size: 12px;
+    color: purple;
+    font-weight: bold;
+    padding: 10px;
+}
+
+.commentContent .card-header>i {
+    font-size: 14px;
+    background-color: rgb(23, 22, 23);
+    color: white;
+    font-weight: bold;
+    padding: 10px;
+    border-bottom-left-radius: 20%;
+}
+
+.card-header {
+    background-color: #f0f0f0;
+    border-bottom: 1px solid #ddd;
+    padding: 10px 20px;
+}
+
+.tab-label {
+    cursor: pointer;
+    padding: 10px 20px;
+    background-color: #f0f0f0;
+    border: 1px solid #ddd;
+    border-bottom: none;
+}
+
+.tab-label:hover {
+    background-color: #e0e0e0;
+}
+
+.tab-input {
+    display: none;
+}
+
+.tab-content {
+    padding: 20px;
+    border: 1px solid #ddd;
+    display: none;
+
+}
+
+.fa-times {
+    cursor: pointer;
+}
+
+.commentContent .card-header {
+    position: relative;
+}
+
+.close-icon {
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 10px;
+    cursor: pointer;
+}
+
+.modal.show1 {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(173, 24, 24, 0.5);
+    /* Semi-transparent black background */
+    /* z-index: 1000; */
+    /* Ensure it's above other elements */
+}
+
+.close-icon {
+    position: absolute;
+    top: 10px;
+    /* Adjust as needed */
+    right: 10px;
+    /* Adjust as needed */
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+}
+
+.custom-date {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 10px;
+    font-weight: bold;
+}
+
+.custom-date h2 {
+    font-size: 15px;
+    font-weight: bold;
+}
+
+.line {
+    flex-grow: 1;
+    height: 1px;
+    background-color: #464343;
+    margin: 0 10px;
+    font-weight: bold;
+}
+
+
+.tab-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.tab-btn {
+    width: 100%;
+    border: none;
+    color: #020617;
+    background-color: #f0f8ff;
+    border-radius: 8px 18px 0px 0px;
+    font-weight: 500;
+    padding: 12px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.tab-btn:hover {
+    background-color: #a5b4fc;
+}
+
+.tab-btn.active {
+    background-color: #c7d2fe;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.show {
+    display: block;
+    gap: 14px;
+    background-color: #c7d2fe;
+    border-radius: 0px 0px 8px 8px;
+    /* padding: 16px; */
+}
+
+.tab-content svg {
+    width: 50%;
+    height: 200px;
+}
+
+
+#userDropdown {
+    top: calc(100% + 5px);
+    /* Position below the textarea */
+    right: 0;
+    /* Align with the left edge of the textarea */
+    z-index: -1000;
+    /* Ensure it appears on top of other content */
+    display: none;
+    min-width: 200px;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    max-height: 25vh;
+    /* Limit dropdown height */
+    overflow-y: auto;
+    /* Enable vertical scrolling */
+}
+
+#userDropdown>div {
+    padding: 10px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+#userDropdown>div:hover {
+    background-color: #f0f0f0;
+}
+
+.fileProperty input::placeholder {
+    color: rgba(208, 208, 208, 0.446) !important;
+}
