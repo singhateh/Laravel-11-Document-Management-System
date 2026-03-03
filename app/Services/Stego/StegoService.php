@@ -85,6 +85,32 @@ class StegoService
     }
 
     /**
+     * Calculate the PSNR (Peak Signal-to-Noise Ratio) between the original carrier
+     * and the stego image to quantify the visual quality impact of LSB embedding.
+     *
+     * PSNR >= 40 dB is the accepted threshold for imperceptible modifications.
+     * Requires the Python driver (uses opencv-python cv2.PSNR()).
+     *
+     * @param  string $originalPath Absolute path to the original (unmodified) carrier image
+     * @param  string $stegoPath    Absolute path to the stego image
+     * @return array{ psnr: float, threshold_40db: bool, quality: string }
+     * @throws Exception
+     */
+    public function psnr(string $originalPath, string $stegoPath): array
+    {
+        $this->assertFileExists($originalPath);
+        $this->assertFileExists($stegoPath);
+
+        $result = $this->runPythonScript('psnr', [$originalPath, $stegoPath]);
+
+        return [
+            'psnr'           => (float)  $result['data']['psnr'],
+            'threshold_40db' => (bool)   $result['data']['threshold_40db'],
+            'quality'        => (string) $result['data']['quality'],
+        ];
+    }
+
+    /**
      * Calculate the maximum payload capacity (in bytes) of a carrier file.
      *
      * @param  string $carrierPath
@@ -100,14 +126,7 @@ class StegoService
         if ($this->isLsbCapable($mime)) {
             return $this->isPythonDriver()
                 ? $this->capacityPython($carrierPath)
-                : (function () use ($carrierPath, $mime) {
-                    $image  = $this->loadImage($carrierPath, $mime);
-                    $pixels = imagesx($image) * imagesy($image);
-                    imagedestroy($image);
-                    // 3 channels × 1 bit each = 3 bits/pixel; divide by 8 for bytes,
-                    // minus 4 bytes for the length prefix stored in LSBs.
-                    return (int) (($pixels * 3 * self::BITS_PER_CHANNEL) / 8) - 4;
-                })();
+                : $this->capacityPhp($carrierPath, $mime);
         }
 
         // For append mode there is no hard limit (filesystem permitting).
@@ -382,18 +401,42 @@ class StegoService
     // GD Helpers
     // -------------------------------------------------------------------------
 
+    /**
+     * Calculate LSB capacity of an image using PHP GD.
+     * Formula: 3 colour channels × 1 bit/channel per pixel → bytes, minus 4-byte length prefix.
+     *
+     * Extracted from an inline closure that previously lived inside capacity().
+     */
+    private function capacityPhp(string $carrierPath, string $mime): int
+    {
+        $image  = $this->loadImage($carrierPath, $mime);
+        $pixels = imagesx($image) * imagesy($image);
+        imagedestroy($image);
+
+        return (int) (($pixels * 3 * self::BITS_PER_CHANNEL) / 8) - 4;
+    }
+
     private function isLsbCapable(string $mime): bool
     {
-        return in_array($mime, ['image/png', 'image/bmp', 'image/x-bmp'], true);
+        // JPEG is accepted for embedding only — the PHP GD driver always saves
+        // the stego output as PNG (JPEG compression is lossy and destroys LSBs).
+        return in_array($mime, ['image/png', 'image/bmp', 'image/x-bmp', 'image/jpeg', 'image/jpg'], true);
     }
 
     private function loadImage(string $path, string $mime): GdImage
     {
         $image = match ($mime) {
-            'image/png'           => imagecreatefrompng($path),
+            'image/png'                     => imagecreatefrompng($path),
             'image/bmp',
-            'image/x-bmp'         => imagecreatefrombmp($path),
-            default               => throw new Exception("Unsupported image MIME type for LSB: {$mime}"),
+            'image/x-bmp'                   => imagecreatefrombmp($path),
+            'image/jpeg',
+            'image/jpg'                     => function_exists('imagecreatefromjpeg')
+                ? imagecreatefromjpeg($path)
+                : throw new Exception(
+                    'PHP GD was built without JPEG support. ' .
+                    'Set STEGO_DRIVER=python in .env to use JPEG carriers.'
+                ),
+            default                         => throw new Exception("Unsupported image MIME type for LSB: {$mime}"),
         };
 
         if ($image === false) {
@@ -405,11 +448,15 @@ class StegoService
 
     private function saveImage(GdImage $image, string $outputPath, string $mime): void
     {
-        $ok = match ($mime) {
+        // JPEG is lossy — re-encoding as JPEG destroys LSB data.
+        // Stego output is always written as lossless PNG when the carrier was JPEG.
+        $saveMime = in_array($mime, ['image/jpeg', 'image/jpg'], true) ? 'image/png' : $mime;
+
+        $ok = match ($saveMime) {
             'image/png'           => imagepng($image, $outputPath, 9),
             'image/bmp',
             'image/x-bmp'         => imagebmp($image, $outputPath),
-            default               => throw new Exception("Unsupported image MIME type for save: {$mime}"),
+            default               => throw new Exception("Unsupported image MIME type for save: {$saveMime}"),
         };
 
         if (!$ok) {

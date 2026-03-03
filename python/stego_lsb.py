@@ -146,6 +146,56 @@ def cmd_capacity(image_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# PSNR  (W2-T07 / W2-T12)
+# ---------------------------------------------------------------------------
+
+def cmd_psnr(original_path: str, stego_path: str) -> None:
+    """
+    Calculate the Peak Signal-to-Noise Ratio between the original carrier and
+    the stego image to quantify the visual quality impact of LSB embedding.
+
+    PSNR >= 40 dB is the accepted threshold for imperceptible modifications.
+    Uses OpenCV's cv2.PSNR() which computes 10 * log10(MAX_I^2 / MSE).
+
+    Returns JSON:
+      { "psnr": <float>, "threshold_40db": <bool>, "quality": "good"|"poor" }
+    """
+    try:
+        import cv2
+
+        for label, path in [("Original", original_path), ("Stego", stego_path)]:
+            if not os.path.isfile(path):
+                _err(f"{label} image not found: {path}")
+                return
+
+        original = cv2.imread(original_path)
+        stego    = cv2.imread(stego_path)
+
+        if original is None:
+            _err(f"Could not decode original image: {original_path}")
+            return
+        if stego is None:
+            _err(f"Could not decode stego image: {stego_path}")
+            return
+
+        # Images may differ in size when a JPEG carrier was embedded and
+        # saved as PNG (format conversion can alter reported dimensions).
+        if original.shape != stego.shape:
+            stego = cv2.resize(stego, (original.shape[1], original.shape[0]))
+
+        psnr_value = cv2.PSNR(original, stego)
+
+        _ok({
+            "psnr":           round(psnr_value, 4),
+            "threshold_40db": psnr_value >= 40.0,
+            "quality":        "good" if psnr_value >= 40.0 else "poor",
+        })
+
+    except Exception as exc:
+        _err(str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Entry Point
 # ---------------------------------------------------------------------------
 
@@ -174,6 +224,12 @@ if __name__ == "__main__":
             sys.exit(1)
         cmd_capacity(sys.argv[2])
 
+    elif command == "psnr":
+        if len(sys.argv) != 4:
+            _err("Usage: stego_lsb.py psnr <original_path> <stego_path>")
+            sys.exit(1)
+        cmd_psnr(sys.argv[2], sys.argv[3])
+
     else:
-        _err(f"Unknown command: {command}. Use embed, extract, or capacity.")
+        _err(f"Unknown command: {command}. Use embed, extract, capacity, or psnr.")
         sys.exit(1)

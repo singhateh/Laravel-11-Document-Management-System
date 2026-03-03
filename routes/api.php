@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\DocumentController as ApiDocumentController;
 use App\Http\Controllers\StegoWebController;
 use App\Models\Document;
 use App\Models\Folder;
@@ -123,10 +124,35 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         return response()->json(['message' => 'Deleted.']);
     });
 
-    // GET /api/documents — document list for SPA Encode dropdown
+    // --------------------------------------------------------------------
+    // Document REST endpoints  (W3-T01, W3-T06, W3-T09)
+    // --------------------------------------------------------------------
+
+    /**
+     * POST /api/documents
+     *   Upload one or more files into a folder.
+     *   Body: multipart/form-data
+     *     files[]    required  — file(s), max 50 MB each
+     *     folder_id  required  — integer, must exist in folders table
+     *     visibility optional  — 'public' (default) | 'private'
+     *   Returns: 201 { message, documents[] }
+     *
+     * GET /api/documents/{id}
+     *   Return metadata for a single document.
+     *   Returns: 200 { document } | 403 | 404
+     *
+     * GET /api/documents
+     *   Paginated lightweight list used by the SPA Encode dropdown.
+     *   Returns: 200 paginated Document objects (id, name, extension, size)
+     */
+    Route::post('/documents',      [ApiDocumentController::class, 'store'])->name('api.documents.store');
+    Route::get('/documents/{id}',  [ApiDocumentController::class, 'show'])->name('api.documents.show')
+        ->whereNumber('id');
+
+    // GET /api/documents — lightweight list for SPA Encode dropdown (W3-T09)
     Route::get('/documents', function () {
         return response()->json(Document::select('id', 'name', 'extension', 'size')->latest()->paginate(50));
-    });
+    })->name('api.documents.index');
 
     // Dashboard stats / recent (for SPA)
     Route::prefix('dashboard')->group(function () {

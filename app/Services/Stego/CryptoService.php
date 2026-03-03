@@ -62,14 +62,7 @@ class CryptoService
             $rawSalt = hex2bin($salt);
         }
 
-        $masterKey = hash_pbkdf2(
-            'sha256',
-            $password,
-            $rawSalt,
-            $iterations,
-            self::KEY_LENGTH * 2, // *2 because raw_output=false returns hex chars (2 per byte)
-            false // return hex string
-        );
+        $masterKey = $this->pbkdf2Derive($password, $rawSalt, $iterations);
 
         return [
             'masterKey'  => $masterKey,
@@ -112,14 +105,7 @@ class CryptoService
             $rawSalt = hex2bin($salt);
         }
 
-        $dek = hash_pbkdf2(
-            'sha256',
-            hex2bin($masterKey),
-            $rawSalt,
-            $iterations,
-            self::KEY_LENGTH * 2, // *2 because raw_output=false returns hex chars (2 per byte)
-            false // return hex string
-        );
+        $dek = $this->pbkdf2Derive(hex2bin($masterKey), $rawSalt, $iterations);
 
         return [
             'dek'        => $dek,
@@ -230,6 +216,28 @@ class CryptoService
     // -------------------------------------------------------------------------
     // Internal Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Shared PBKDF2-SHA256 key derivation — used by both deriveMasterKey() and deriveDEK().
+     *
+     * Eliminates the duplicated hash_pbkdf2() call that previously existed in both methods.
+     *
+     * @param  string $input      Password string or raw master-key bytes
+     * @param  string $rawSalt    Raw binary salt
+     * @param  int    $iterations PBKDF2 iteration count
+     * @return string             Hex-encoded derived key (KEY_LENGTH bytes = 64 hex chars)
+     */
+    private function pbkdf2Derive(string $input, string $rawSalt, int $iterations): string
+    {
+        return hash_pbkdf2(
+            'sha256',
+            $input,
+            $rawSalt,
+            $iterations,
+            self::KEY_LENGTH * 2, // KEY_LENGTH bytes × 2 hex chars/byte
+            false                 // return hex string, not raw binary
+        );
+    }
 
     /**
      * Generate cryptographically secure random bytes.

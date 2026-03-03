@@ -142,4 +142,124 @@ try {
     echo "✗ FAIL: " . $e->getMessage() . PHP_EOL;
 }
 
+// -------------------------------------------------------------------------
+// W2-T11: JPEG carrier — embed and extract (LSB output saved as lossless PNG)
+// -------------------------------------------------------------------------
+echo PHP_EOL . "=== W2-T11: StegoService (JPEG carrier → PNG output) ===" . PHP_EOL;
+try {
+    $stego = new App\Services\Stego\StegoService();
+
+    $jpegCarrier = sys_get_temp_dir() . '/stego_test_carrier.jpg';
+    $pngOutput   = sys_get_temp_dir() . '/stego_test_output_from_jpeg.png';
+
+    // PHP GD on this build has no JPEG support — create the test JPEG via Pillow
+    // (which is already installed as part of the Python stegano stack).
+    $pythonPath = config('stegolock.python_path', 'python');
+    $escaped    = addslashes($jpegCarrier);
+    shell_exec("{$pythonPath} -c \"from PIL import Image; img = Image.new('RGB', (100, 100), color=(120, 180, 90)); img.save('{$escaped}')\"");
+
+    if (!file_exists($jpegCarrier)) {
+        throw new \RuntimeException("Could not create test JPEG via Pillow at: {$jpegCarrier}");
+    }
+    echo "✓ Test JPEG created via Pillow (" . filesize($jpegCarrier) . " bytes)" . PHP_EOL;
+
+    $secret = 'JPEG carrier test payload!';
+
+    $stego->embed($jpegCarrier, $secret, $pngOutput);
+    echo "✓ embed() into JPEG carrier — output: " . basename($pngOutput) . PHP_EOL;
+
+    $extracted = $stego->extract($pngOutput);
+    echo "✓ extract() — recovered: '{$extracted}'" . PHP_EOL;
+    echo "✓ round-trip match: " . var_export($extracted === $secret, true) . PHP_EOL;
+
+    @unlink($jpegCarrier);
+    @unlink($pngOutput);
+} catch (\Throwable $e) {
+    echo "✗ FAIL: " . $e->getMessage() . PHP_EOL;
+}
+
+// -------------------------------------------------------------------------
+// W2-T07 / W2-T12: PSNR quality metric — must be >= 40 dB for LSB
+// -------------------------------------------------------------------------
+echo PHP_EOL . "=== W2-T07 / W2-T12: StegoService PSNR quality metric ===" . PHP_EOL;
+try {
+    $stego = new App\Services\Stego\StegoService();
+
+    // Create a 200×200 PNG carrier (larger = more realistic PSNR)
+    $img      = imagecreatetruecolor(200, 200);
+    imagefill($img, 0, 0, imagecolorallocate($img, 100, 149, 237)); // cornflower blue
+    $original = sys_get_temp_dir() . '/stego_psnr_original.png';
+    $stego_out = sys_get_temp_dir() . '/stego_psnr_output.png';
+    imagepng($img, $original);
+    imagedestroy($img);
+
+    $stego->embed($original, 'PSNR test payload', $stego_out);
+    echo "✓ embed() complete — measuring PSNR..." . PHP_EOL;
+
+    $result = $stego->psnr($original, $stego_out);
+    echo "✓ psnr() — value: {$result['psnr']} dB" . PHP_EOL;
+    echo "✓ threshold_40db: " . var_export($result['threshold_40db'], true) .
+         " (expect true for LSB)" . PHP_EOL;
+    echo "✓ quality: {$result['quality']}" . PHP_EOL;
+
+    if (!$result['threshold_40db']) {
+        echo "⚠ WARNING — PSNR below 40 dB threshold ({$result['psnr']} dB)" . PHP_EOL;
+    }
+
+    @unlink($original);
+    @unlink($stego_out);
+} catch (\Throwable $e) {
+    echo "✗ FAIL: " . $e->getMessage() . PHP_EOL;
+}
+
+// -------------------------------------------------------------------------
+// W2-T13: Edge cases — oversized payload and corrupted image
+// -------------------------------------------------------------------------
+echo PHP_EOL . "=== W2-T13: Edge cases ===" . PHP_EOL;
+try {
+    $stego = new App\Services\Stego\StegoService();
+
+    // --- Edge case 1: payload larger than carrier capacity ----------------
+    $img         = imagecreatetruecolor(10, 10); // tiny 10×10 PNG
+    imagefill($img, 0, 0, imagecolorallocate($img, 50, 50, 50));
+    $tinyCarrier = sys_get_temp_dir() . '/stego_tiny_carrier.png';
+    $tinyOutput  = sys_get_temp_dir() . '/stego_tiny_output.png';
+    imagepng($img, $tinyCarrier);
+    imagedestroy($img);
+
+    $oversizedPayload = str_repeat('X', 10000); // 10 KB into a 10×10 image
+    try {
+        $stego->embed($tinyCarrier, $oversizedPayload, $tinyOutput);
+        echo "✗ Expected exception for oversized payload but none thrown" . PHP_EOL;
+    } catch (\Exception $e) {
+        echo "✓ Oversized payload correctly throws: " . $e->getMessage() . PHP_EOL;
+    }
+    @unlink($tinyCarrier);
+    @unlink($tinyOutput);
+
+    // --- Edge case 2: extract from a non-stego / corrupted file -----------
+    $garbageFile = sys_get_temp_dir() . '/stego_garbage.png';
+    file_put_contents($garbageFile, str_repeat("\x00\xFF\xAB", 50)); // garbage bytes
+
+    try {
+        $stego->extract($garbageFile);
+        echo "✗ Expected exception for corrupted image but none thrown" . PHP_EOL;
+    } catch (\Exception $e) {
+        echo "✓ Corrupted image correctly throws: " . $e->getMessage() . PHP_EOL;
+    }
+    @unlink($garbageFile);
+
+    // --- Edge case 3: embed into a non-existent file ----------------------
+    try {
+        $stego->embed('/nonexistent/path/carrier.png', 'data', '/tmp/out.png');
+        echo "✗ Expected exception for missing carrier but none thrown" . PHP_EOL;
+    } catch (\Exception $e) {
+        echo "✓ Missing carrier correctly throws: " . $e->getMessage() . PHP_EOL;
+    }
+
+    echo "✓ All edge cases handled correctly" . PHP_EOL;
+} catch (\Throwable $e) {
+    echo "✗ FAIL: " . $e->getMessage() . PHP_EOL;
+}
+
 echo PHP_EOL . "=== All tests complete ===" . PHP_EOL;

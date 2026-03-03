@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AccessLog;
 use App\Models\User;
 use App\Models\Folder;
 use App\Models\Document;
@@ -137,6 +138,20 @@ class DocumentController extends Controller
     {
         $folderId = $this->documentService->setUploadDocumentFiles($request);
 
+        // W3-T12: Audit log — record the upload action
+        AccessLog::create([
+            'user_id'     => Auth::id(),
+            'action'      => 'upload',
+            'resource'    => 'document',
+            'resource_id' => (string) $folderId,
+            'ip_address'  => $request->ip(),
+            'user_agent'  => $request->userAgent(),
+            'method'      => $request->method(),
+            'url'         => $request->fullUrl(),
+            'status_code' => 200,
+            'accessed_at' => now(),
+        ]);
+
         return response()->json(['message' => 'Files uploaded successfully', 'url' => route('getFiles', $folderId)], 200);
     }
 
@@ -181,6 +196,20 @@ class DocumentController extends Controller
         } catch (\Exception $e) {
             abort(500, 'Failed to retrieve document: ' . $e->getMessage());
         }
+
+        // W3-T12: Audit log — record the download action
+        AccessLog::create([
+            'user_id'     => $user->id,
+            'action'      => 'download',
+            'resource'    => 'document',
+            'resource_id' => $document->id,
+            'ip_address'  => request()->ip(),
+            'user_agent'  => request()->userAgent(),
+            'method'      => request()->method(),
+            'url'         => request()->fullUrl(),
+            'status_code' => 200,
+            'accessed_at' => now(),
+        ]);
 
         $filename = $document->original_name ?? $document->name;
         $mimeType = mime_content_type($absolutePath) ?: 'application/octet-stream';

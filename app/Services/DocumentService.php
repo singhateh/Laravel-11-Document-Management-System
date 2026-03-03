@@ -8,6 +8,7 @@ use App\Models\Document;
 use App\Models\Notification;
 use App\Jobs\SendDocumentJob;
 use App\Services\Stego\CryptoService;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
@@ -163,7 +164,94 @@ class DocumentService
     }
 
     // =========================================================================
-    // Existing methods below (unchanged)
+    // Private upload helpers (DRY)
+    // =========================================================================
+
+    /**
+     * Persist a newly-moved uploaded file as a Document record and encrypt it at rest.
+     *
+     * Consolidates the identical Document-create + encrypt pattern that
+     * previously appeared three times in uploadFolder() and uploadFiles().
+     */
+    private function createAndSaveDocument(
+        UploadedFile $file,
+        string $filePath,
+        int $folderId,
+        string $visibility = 'public'
+    ): Document {
+        $document = Document::create([
+            'name'          => $file->getClientOriginalName(),
+            'original_name' => $file->getClientOriginalName(),
+            'extension'     => $file->getClientOriginalExtension(),
+            'file_path'     => $filePath,
+            'size'          => $file->getSize(),
+            'folder_id'     => $folderId,
+            'visibility'    => $visibility,
+            'owner_id'      => Auth::id(),
+            'date'          => now(),
+        ]);
+
+        if ($this->isEncryptionEnabled()) {
+            $this->encryptDocumentFile($document);
+        }
+
+        return $document;
+    }
+
+    /**
+     * Create a physical child directory and its Folder record exactly once per upload batch.
+     *
+     * The new folder's ID is written back via $createdChildFolderId so subsequent
+     * files in the same request reuse the same subfolder without creating duplicates.
+     *
+     * @param  int|null $createdChildFolderId Written with the new folder's ID on first call; unchanged thereafter
+     */
+    private function ensureChildFolderOnce(
+        string $physicalParentPath,
+        string $childName,
+        int $parentFolderId,
+        string $visibility,
+        ?int &$createdChildFolderId
+    ): void {
+        if (!file_exists($physicalParentPath)) {
+            mkdir($physicalParentPath, 0777, true);
+        }
+
+        $childPath = $physicalParentPath . '/' . $childName;
+
+        if (!file_exists($childPath) && $createdChildFolderId === null) {
+            mkdir($childPath, 0777, true);
+
+            $folder               = Folder::create([
+                'name'       => $childName,
+                'parent_id'  => $parentFolderId,
+                'visibility' => $visibility,
+            ]);
+            $createdChildFolderId = $folder->id;
+        }
+    }
+
+    /**
+     * Return document IDs associated with any of the given tag IDs.
+     * Returns an empty array when $tags is empty so callers can skip the filter.
+     *
+     * @param  int[] $tags
+     * @return int[]
+     */
+    private function getDocumentIdsByTags(array $tags): array
+    {
+        if (empty($tags)) {
+            return [];
+        }
+
+        return DB::table('document_tag')
+            ->whereIn('tag_id', $tags)
+            ->pluck('document_id')
+            ->all();
+    }
+
+    // =========================================================================
+    // Existing methods below
     // =========================================================================
 
     public function setUpdateDocumentOrder($folderId, $documentIds)
@@ -177,16 +265,10 @@ class DocumentService
 
     public function getFolderFiles($folderId, $tags = [])
     {
-        $documentTags = DB::table('document_tag')
-            ->whereIn('tag_id', $tags)
-            ->pluck('document_id')
-            ->values()
-            ->toArray() ?? [];
+        $documentIds = $this->getDocumentIdsByTags($tags);
 
         $documents = Document::whereFolderId($folderId)
-            ->when(count($documentTags) > 0, function ($query) use ($documentTags) {
-                $query->whereIn('id', $documentTags);
-            })
+            ->when($documentIds !== [], fn ($q) => $q->whereIn('id', $documentIds))
             ->with('tags')
             ->latest()
             ->get();
@@ -199,16 +281,10 @@ class DocumentService
 
     public function setFilterDocumentByTag($folderId, $tags = [])
     {
-        $documentTags = DB::table('document_tag')
-            ->whereIn('tag_id', $tags)
-            ->pluck('document_id')
-            ->values()
-            ->toArray() ?? [];
+        $documentIds = $this->getDocumentIdsByTags($tags);
 
         $documents = Document::whereFolderId($folderId)
-            ->when(count($documentTags) > 0, function ($query) use ($documentTags) {
-                $query->whereIn('id', $documentTags);
-            })
+            ->when($documentIds !== [], fn ($q) => $q->whereIn('id', $documentIds))
             ->with('tags')
             ->latest()
             ->get();
@@ -277,13 +353,13 @@ class DocumentService
 
     public function setChangeFile($request)
     {
-        $documentId = $request->input('document_id');
-        $type = $request->input('type');
+        $documentId  = $request->input('document_id');
+        $type        = $request->input('type');
         $requestData = $request->input('data');
+        $folderId    = $request->input('folder_id');
+
         $document = Document::find($documentId);
-        $documentName = $request->input('name');
-        $folderId = $request->input('folder_id');
-        $folder = Folder::find($folderId);
+        $folder   = Folder::find($folderId);
 
         if (!$document) {
             return response()->json(['message' => 'Document not found'], 404);
@@ -293,57 +369,45 @@ class DocumentService
             return response()->json(['message' => 'Folder not found'], 404);
         }
 
-        if ($type === 'file_name') {
-            $document->update(['name' => $requestData]);
-        }
-
-        if ($type === 'owner') {
-            $document->update(['owner_id' => $requestData]);
-        }
-
-        if ($type === 'archive') {
-            $document->delete();
-        }
+        // Simple single-field mutations handled with a match expression.
+        match ($type) {
+            'file_name' => $document->update(['name' => $requestData]),
+            'owner'     => $document->update(['owner_id' => $requestData]),
+            'archive'   => $document->delete(),
+            default     => null,
+        };
 
         if ($request->hasFile('file') && $type === 'file') {
-            $file = $request->file('file');
+            $file     = $request->file('file');
             $fileName = $file->getClientOriginalName();
-            $extension = $file->getClientOriginalExtension();
-            $fileSize = $file->getSize();
 
             if (!$file->isValid()) {
-                // Handle the case where the file is not valid (e.g., it doesn't exist or cannot be accessed)
                 Log::error("File {$fileName} is not valid");
                 return response()->json(['message' => 'File is not valid'], 400);
             }
 
-            // Check if the file already exists in the folder
             if (Storage::disk('public')->exists($document->file_path)) {
                 Storage::disk('public')->delete($document->file_path);
             }
 
-            $parentStringFolderPath = 'documents/' . $folder->name . '/' . $fileName;
-            // Store the file directly in the 'uploads' folder
+            $relativePath = 'documents/' . $folder->name . '/' . $fileName;
             $file->move(public_path('documents/' . $folder->name), $fileName);
 
             $document->update([
-                'file_path' => $parentStringFolderPath,
+                'file_path'     => $relativePath,
                 'original_name' => $fileName,
-                'size' => $fileSize,
-                'extension' => $extension,
+                'size'          => $file->getSize(),
+                'extension'     => $file->getClientOriginalExtension(),
             ]);
         }
 
         if ($type === 'folder') {
-
-            $parentStringFolderPath = 'documents/' . $folder->name . '/' . $document->original_name;
-
-            // Move the file to the new folder
-            Storage::disk('document_public')->move($document->file_path, $parentStringFolderPath);
+            $relativePath = 'documents/' . $folder->name . '/' . $document->original_name;
+            Storage::disk('document_public')->move($document->file_path, $relativePath);
 
             $document->update([
-                'folder' => $folderId,
-                'file_path' => $parentStringFolderPath,
+                'folder'    => $folderId,
+                'file_path' => $relativePath,
             ]);
         }
 
@@ -353,268 +417,128 @@ class DocumentService
 
     protected function uploadFolder($request)
     {
-        // dd($request);
-        // Get the folder ID from the request
-        $folderId = $request->input('folder_id');
+        $folderId         = (int) $request->input('folder_id');
         $parentFolderName = Folder::find($folderId)?->name;
+        $childFolderName  = $request->input('folder_name') ?? uniqid();
+        $visibility       = $request->input('visibility') ?? 'public';
+        $parentFolder     = public_path('documents/' . $parentFolderName);
         $createdChildFolder = null;
-        $childFolderName =  $request->input('folder_name') ?? uniqid();
-        $visibility =  $request->input('visibility') ?? 'public';
-        $parentFolder = public_path('documents/' . $parentFolderName);
 
-
-        // Handle the file upload
-        if ($request->hasFile('files')) {
-
-            foreach ($request->file('files') as $file) {
-
-                if ($file->isValid()) {
-                    // Get the size of the file
-                    $fileSize = $file->getSize();
-                } else {
-                    // Handle the case where the file is not valid (e.g., it doesn't exist or cannot be accessed)
-                    Log::error("File {$file->getClientOriginalName()} is not valid");
-                    continue; // Skip processing this file and move to the next one
-                }
-
-                // Create the parent folder if it doesn't exist
-                if (!file_exists($parentFolder)) {
-                    mkdir($parentFolder, 0777, true);
-                }
-
-                // Create a unique ID for the child folder
-                $childFolder = $parentFolder . '/' . $childFolderName;
-                $parentStringFolderPath = 'documents/' . $parentFolderName . '/' . $childFolderName . '/' . $file->getClientOriginalName();
-
-                // Create the child folder if it doesn't exist
-                if (!file_exists($childFolder) && is_null($createdChildFolder)) {
-                    mkdir($childFolder, 0777, true);
-
-                    // This should create only once
-                    $createdFolder = Folder::create([
-                        'name' => $childFolderName,
-                        'parent_id' => $folderId,
-                        'visibility' => $visibility
-                    ]);
-
-                    $createdChildFolder = $createdFolder->id;
-                    $folderId = $createdChildFolder;
-                }
-
-                // Check if the file already exists in the folder
-                if (Storage::disk('public')->exists($parentStringFolderPath)) {
-                    continue; // Skip processing this file if it already exists
-                }
-
-                // Store the file in the child folder
-                $file->move($childFolder, $file->getClientOriginalName());
-
-                // Create a new document record
-                $document = new Document();
-                $document->name = $file->getClientOriginalName();
-                $document->original_name = $file->getClientOriginalName();
-                $document->extension = $file->getClientOriginalExtension();
-                $document->file_path = $parentStringFolderPath;
-                $document->size =  $fileSize;
-                $document->folder_id = $createdChildFolder;
-                $document->visibility = 'public';
-                $document->owner_id = User::first()->id;
-                $document->date = now();
-                $document->save();
-
-                // Encrypt the file at rest with AES-256-GCM.
-                if ($this->isEncryptionEnabled()) {
-                    $this->encryptDocumentFile($document);
-                }
-            }
-            return $createdChildFolder;
-        } else {
-            // No files uploaded
+        if (!$request->hasFile('files')) {
             return response()->json(['message' => 'No files uploaded'], 400);
         }
+
+        foreach ($request->file('files') as $file) {
+            if (!$file->isValid()) {
+                Log::error("File {$file->getClientOriginalName()} is not valid");
+                continue;
+            }
+
+            $this->ensureChildFolderOnce($parentFolder, $childFolderName, $folderId, $visibility, $createdChildFolder);
+
+            $childFolder  = $parentFolder . '/' . $childFolderName;
+            $relativePath = 'documents/' . $parentFolderName . '/' . $childFolderName . '/' . $file->getClientOriginalName();
+
+            if (Storage::disk('public')->exists($relativePath)) {
+                continue;
+            }
+
+            $file->move($childFolder, $file->getClientOriginalName());
+
+            $this->createAndSaveDocument($file, $relativePath, $createdChildFolder ?? $folderId, $visibility);
+        }
+
+        return $createdChildFolder;
     }
 
     protected function uploadFiles($request)
     {
-        // Get the folder ID from the request
-        $folderId = $request->input('folder_id');
-        $folderName = Folder::find($folderId)->name;
-        $createdChildFolder = null;
+        $folderId        = (int) $request->input('folder_id');
+        $folderName      = Folder::find($folderId)->name;
+        $parentFolder    = public_path('documents/' . $folderName);
         $childFolderName = uniqid();
-        $parentFolder = public_path('documents/' . $folderName);
+        $createdChildFolder = null;
+        $lastDocument       = null;
 
-
-        // Handle the file upload
-        if ($request->hasFile('files')) {
-            foreach ($request->file('files') as $file) {
-
-
-                if ($file->isValid()) {
-                    // Get the size of the file
-                    $fileSize = $file->getSize();
-                } else {
-                    // Handle the case where the file is not valid (e.g., it doesn't exist or cannot be accessed)
-                    Log::error("File {$file->getClientOriginalName()} is not valid");
-                    continue; // Skip processing this file and move to the next one
-                }
-
-                // Check if type is folder and folder_id is present
-                if ($request->input('type') === 'folder' && $folderId) {
-
-                    // Create the child folder if it doesn't exist
-                    if (!file_exists($parentFolder)) {
-                        mkdir($parentFolder, 0777, true);
-                    }
-
-                    // Create a unique ID for the child folder
-                    $childFolder = $parentFolder . '/' . $childFolderName;
-                    $parentStringFolderPath = 'documents/' . $folderName . '/' . $childFolderName . '/' . $file->getClientOriginalName();
-
-                    // Create the child folder if it doesn't exist
-                    if (!file_exists($childFolder) && is_null($createdChildFolder)) {
-                        mkdir($childFolder, 0777, true);
-
-                        // This should create only once
-                        $createdFolder = Folder::create(['name' => $childFolderName, 'parent_id' => $folderId, 'visibility' => 'public']);
-
-                        $createdChildFolder = $createdFolder->id;
-                        $folderId = $createdChildFolder;
-                    }
-
-                    // Check if the file already exists in the folder
-                    if (Storage::disk('public')->exists($parentStringFolderPath)) {
-                        continue; // Skip processing this file if it already exists
-                    }
-
-                    // Store the file in the child folder
-                    $file->move($childFolder, $file->getClientOriginalName());
-
-                    // Create a new document record
-                    $document = new Document();
-                    $document->name = $file->getClientOriginalName();
-                    $document->original_name = $file->getClientOriginalName();
-                    $document->extension = $file->getClientOriginalExtension();
-                    $document->file_path = $parentStringFolderPath;
-                    $document->size =  $fileSize;
-                    $document->folder_id = $createdChildFolder;
-                    $document->visibility = 'public';
-                    $document->owner_id = User::first()->id;
-                    $document->date = now();
-                    $document->save();
-
-                    // Encrypt the file at rest with AES-256-GCM.
-                    if ($this->isEncryptionEnabled()) {
-                        $this->encryptDocumentFile($document);
-                    }
-                } else {
-
-                    $parentStringFolderPath = 'documents/' . $folderName . '/' . $file->getClientOriginalName();
-                    // Store the file directly in the 'uploads' folder
-                    $file->move($parentFolder, $file->getClientOriginalName());
-
-                    // Check if the file already exists in the folder
-                    if (Storage::disk('public')->exists($parentStringFolderPath)) {
-                        continue; // Skip processing this file if it already exists
-                    }
-
-                    // Create a new document record
-                    $document = new Document();
-                    $document->name = $file->getClientOriginalName();
-                    $document->original_name = $file->getClientOriginalName();
-                    $document->extension = $file->getClientOriginalExtension();
-                    $document->file_path = $parentStringFolderPath;
-                    $document->size =  $fileSize;
-                    $document->folder_id = $folderId; // No folder ID
-                    $document->visibility = 'public';
-                    $document->owner_id = User::first()->id;
-                    $document->date = now();
-                    $document->save();
-
-                    // Encrypt the file at rest with AES-256-GCM.
-                    if ($this->isEncryptionEnabled()) {
-                        $this->encryptDocumentFile($document);
-                    }
-                }
-            }
-            // Return a success response
-            return $document ?? null;
-        } else {
-            // No files uploaded
+        if (!$request->hasFile('files')) {
             return response()->json(['message' => 'No files uploaded'], 400);
         }
+
+        foreach ($request->file('files') as $file) {
+            if (!$file->isValid()) {
+                Log::error("File {$file->getClientOriginalName()} is not valid");
+                continue;
+            }
+
+            if ($request->input('type') === 'folder' && $folderId) {
+                $this->ensureChildFolderOnce($parentFolder, $childFolderName, $folderId, 'public', $createdChildFolder);
+
+                $childFolder  = $parentFolder . '/' . $childFolderName;
+                $relativePath = 'documents/' . $folderName . '/' . $childFolderName . '/' . $file->getClientOriginalName();
+
+                if (Storage::disk('public')->exists($relativePath)) {
+                    continue;
+                }
+
+                $file->move($childFolder, $file->getClientOriginalName());
+
+                $lastDocument = $this->createAndSaveDocument($file, $relativePath, $createdChildFolder ?? $folderId);
+            } else {
+                $relativePath = 'documents/' . $folderName . '/' . $file->getClientOriginalName();
+                $file->move($parentFolder, $file->getClientOriginalName());
+
+                if (Storage::disk('public')->exists($relativePath)) {
+                    continue;
+                }
+
+                $lastDocument = $this->createAndSaveDocument($file, $relativePath, $folderId);
+            }
+        }
+
+        return $lastDocument;
     }
 
-    protected function uploadUrl($request)
+    protected function uploadUrl($request): Document
     {
-        // Get the folder ID from the request
-        $folderId = $request->input('folder_id');
-        $urlName = $request->input('name');
-        $url = $request->input('url');
+        $folderId   = $request->input('folder_id');
+        $urlName    = $request->input('name');
+        $url        = $request->input('url');
         $visibility = $request->input('visibility');
 
-        // Create a new document record
-        $document = new Document();
-        $document->name = $urlName;
-        $document->original_name = $urlName;
-        $document->extension = $this->isYouTubeUrl($url) ? 'youtube' : '';
-        $document->file_path = $url;
-        $document->url = $url;
-        $document->size =  0;
-        $document->folder_id = $folderId; // No folder ID
-        $document->visibility = $visibility;
-        $document->owner_id = User::first()->id;
-        $document->date = now();
-        $document->save();
-
-        return  $document;
+        return Document::create([
+            'name'          => $urlName,
+            'original_name' => $urlName,
+            'extension'     => $this->isYouTubeUrl($url) ? 'youtube' : '',
+            'file_path'     => $url,
+            'url'           => $url,
+            'size'          => 0,
+            'folder_id'     => $folderId,
+            'visibility'    => $visibility,
+            'owner_id'      => Auth::id(),
+            'date'          => now(),
+        ]);
     }
 
     protected function getFolderInfo($folderId)
     {
-        // Get the folder
         $folder = Folder::find($folderId);
 
         if (!$folder) {
-            return null; // Folder not found
+            return null;
         }
 
-        // Get all documents in the folder
         $documents = Document::whereFolderId($folderId)->get();
 
-        // Initialize counters for public and private documents
-        $numPublicDocuments = 0;
-        $numPrivateDocuments = 0;
-
-        // Calculate total size of documents in the folder
-        $totalSize = 0;
-        foreach ($documents as $document) {
-            // Increment the appropriate counter based on document visibility
-            if ($document->visibility === 'public') {
-                $numPublicDocuments++;
-            } else {
-                $numPrivateDocuments++;
-            }
-
-            // Accumulate the size of the document
-            $totalSize += $document->size;
-        }
-
-        // Format the total size
-        $formattedTotalSize = $this->getFormatSize($totalSize);
-
-        // Count total number of documents in the folder
-        $numTotalDocuments = $documents->count();
-
         return [
-            'folder_name' => $folder->name,
+            'folder_name'   => $folder->name,
             'num_documents' => [
-                'total' => $numTotalDocuments,
-                'public' => $numPublicDocuments,
-                'private' => $numPrivateDocuments
+                'total'   => $documents->count(),
+                'public'  => $documents->where('visibility', 'public')->count(),
+                'private' => $documents->where('visibility', 'private')->count(),
             ],
-            'total_size' => $formattedTotalSize,
-            'created_at' => $folder->created_at->format('Y/m/d H:i:s'), // Format created date
-            'updated_at' => $folder->updated_at->format('Y/m/d H:i:s') // Format updated date
+            'total_size' => $this->getFormatSize($documents->sum('size')),
+            'created_at' => $folder->created_at->format('Y/m/d H:i:s'),
+            'updated_at' => $folder->updated_at->format('Y/m/d H:i:s'),
         ];
     }
 
@@ -629,19 +553,8 @@ class DocumentService
         return round($bytes, 2) . ' ' . $units[$index];
     }
 
-    protected function isYouTubeUrl($url)
+    protected function isYouTubeUrl(string $url): bool
     {
-        // Check if the URL contains "youtube.com" and "watch?v="
-        if (strpos($url, 'youtube.com') !== false && strpos($url, 'watch?v=') !== false) {
-            return true;
-        }
-
-        // Check if the URL contains "youtu.be"
-        if (strpos($url, 'youtu.be') !== false) {
-            return true;
-        }
-
-        // If none of the above conditions are met, it's not a YouTube URL
-        return false;
+        return (bool) preg_match('~(youtube\.com/watch\?v=|youtu\.be/)~', $url);
     }
 }
