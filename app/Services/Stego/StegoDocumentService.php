@@ -1,0 +1,301 @@
+<?php
+
+namespace App\Services\Stego;
+
+use App\Models\Document;
+use Exception;
+use Illuminate\Support\Facades\Auth;
+use Throwable;
+
+/**
+ * StegoDocumentService  —  Orchestrator
+ *
+ * Coordinates all 5 Stego micro-services to encode (hide) a document inside
+ * carrier files and decode (recover) it again.
+ *
+ * Workflow — Encode:
+ *   1. CryptoService  : derive DEK from master key + document ID
+ *   2. CryptoService  : encrypt plaintext → { ciphertext, iv, auth_tag, hash }
+ *   3. SegmentationService : split ciphertext into N chunks (one per carrier)
+ *   4. StegoService   : embed each chunk into its carrier file
+ *   5. CloudStorageService : upload modified carriers to S3
+ *   6. PersistenceService  : persist StegoDocument + StegoCarriers + StegoSegments
+ *
+ * Workflow — Decode:
+ *   1. PersistenceService  : load StegoDocument + ordered segments
+ *   2. CloudStorageService : download carrier files (if stored on S3)
+ *   3. StegoService   : extract encrypted chunk from each carrier
+ *   4. SegmentationService : reassemble chunks (with hash verification)
+ *   5. CryptoService  : re-derive DEK, decrypt → plaintext
+ *   6. CryptoService  : verify document hash
+ */
+class StegoDocumentService
+{
+    public function __construct(
+        private readonly CryptoService       $crypto,
+        private readonly StegoService        $stego,
+        private readonly SegmentationService $segmentation,
+        private readonly CloudStorageService $cloud,
+        private readonly PersistenceService  $persistence,
+    ) {}
+
+    // =========================================================================
+    // ENCODE
+    // =========================================================================
+
+    /**
+     * Hide a document inside one or more carrier files.
+     *
+     * @param  int    $userId        Authenticated user ID
+     * @param  string $plaintext     Raw document bytes to protect
+     * @param  string $masterKey     Hex-encoded master key (from CryptoService::deriveMasterKey)
+     * @param  array  $carrierPaths  Absolute local paths to carrier files (images / binaries)
+     * @param  int|null $documentId  Optional FK to an existing documents.id record
+     * @return \App\Models\StegoDocument  The persisted StegoDocument with id
+     * @throws Throwable
+     */
+    public function encode(
+        int $userId,
+        string $plaintext,
+        string $masterKey,
+        array $carrierPaths,
+        ?int $documentId = null
+    ): \App\Models\StegoDocument {
+        if (empty($carrierPaths)) {
+            throw new Exception('At least one carrier file is required for encoding.');
+        }
+
+        // -----------------------------------------------------------------
+        // Step 1 & 2: Derive DEK and encrypt the document
+        // -----------------------------------------------------------------
+        $documentRef = $documentId ? (string) $documentId : uniqid('stego_', true);
+
+        $dekResult   = $this->crypto->deriveDEK($masterKey, $documentRef);
+        $encrypted   = $this->crypto->encrypt($plaintext, $dekResult['dek']);
+        $hash        = $this->crypto->hashDocument($plaintext);
+
+        // -----------------------------------------------------------------
+        // Step 3: Segment the ciphertext across available carriers
+        // -----------------------------------------------------------------
+        $numSegments  = count($carrierPaths);
+        $segments     = $this->segmentation->segment($encrypted['ciphertext'], $numSegments);
+
+        // -----------------------------------------------------------------
+        // Step 4 & 5: Embed each chunk into its carrier and upload to S3
+        // -----------------------------------------------------------------
+        $tmpDir    = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'stegolock_' . uniqid();
+        mkdir($tmpDir, 0700, true);
+
+        $carrierRecords = [];
+        $segmentRecords = [];
+
+        try {
+            // First, persist the StegoDocument shell so we have an ID for key naming.
+            $stegoDoc = $this->persistence->createStegoDocument([
+                'document_id'    => $documentId,
+                'user_id'        => $userId,
+                'ciphertext'     => $encrypted['ciphertext'],
+                'iv'             => $encrypted['iv'],
+                'auth_tag'       => $encrypted['auth_tag'],
+                'hash_sha256'    => $hash,
+                'dek_salt'       => $dekResult['salt'],
+                'dek_iterations' => $dekResult['iterations'],
+                's3_key'         => null,
+                's3_url'         => null,
+            ]);
+
+            foreach ($segments as $seg) {
+                $idx         = $seg['index'];
+                $carrierPath = $carrierPaths[$idx];
+                $outputPath  = $tmpDir . DIRECTORY_SEPARATOR . "carrier_{$idx}_" . basename($carrierPath);
+
+                // Embed the encrypted chunk into the carrier.
+                $this->stego->embed($carrierPath, $seg['chunk'], $outputPath);
+
+                // Upload the modified carrier to S3.
+                $s3Key    = $this->cloud->carrierKey($userId, "doc{$stegoDoc->id}_seg{$idx}_" . basename($carrierPath));
+                $s3Result = $this->cloud->uploadFile($outputPath, $s3Key);
+
+                // Persist the carrier record.
+                $carrier = $this->persistence->createStegoCarrier([
+                    'name'        => basename($carrierPath),
+                    'file_path'   => $outputPath,
+                    'file_type'   => $this->resolveFileType($carrierPath),
+                    'mime_type'   => mime_content_type($carrierPath) ?: null,
+                    'size'        => filesize($outputPath),
+                    's3_key'      => $s3Result['s3_key'],
+                    's3_url'      => $s3Result['s3_url'],
+                    'uploaded_by' => $userId,
+                ]);
+
+                $carrierRecords[] = $carrier;
+
+                // Persist the segment record.
+                $segKey = $this->cloud->segmentKey($stegoDoc->id, $idx);
+                $segmentRecords[] = [
+                    'stego_document_id' => $stegoDoc->id,
+                    'stego_carrier_id'  => $carrier->id,
+                    'segment_index'     => $idx,
+                    'encrypted_chunk'   => $seg['chunk'],
+                    's3_key'            => $segKey,
+                    'chunk_hash'        => $seg['hash'],
+                ];
+            }
+
+            // Bulk-persist all segments in one transaction.
+            $this->persistence->createStegoSegments($segmentRecords);
+
+            // Log the encode operation.
+            $this->persistence->logAccess([
+                'user_id'     => $userId,
+                'action'      => 'stego_encode',
+                'resource'    => 'stego_document',
+                'resource_id' => $stegoDoc->id,
+                'payload'     => ['document_id' => $documentId, 'num_segments' => $numSegments],
+            ]);
+
+        } finally {
+            // Clean up temp files.
+            $this->cleanupDir($tmpDir);
+        }
+
+        return $stegoDoc->fresh();
+    }
+
+    // =========================================================================
+    // DECODE
+    // =========================================================================
+
+    /**
+     * Recover the original plaintext from a StegoDocument.
+     *
+     * @param  int    $stegoDocumentId  Primary key of the StegoDocument to decode
+     * @param  string $masterKey        Hex-encoded master key
+     * @param  int    $userId           Authenticated user ID (for access log)
+     * @return string                   Recovered plaintext bytes
+     * @throws Exception|Throwable
+     */
+    public function decode(int $stegoDocumentId, string $masterKey, int $userId): string
+    {
+        // -----------------------------------------------------------------
+        // Step 1: Load metadata and segments
+        // -----------------------------------------------------------------
+        $stegoDoc = $this->persistence->findStegoDocument($stegoDocumentId);
+        $segments = $this->persistence->getSegments($stegoDocumentId);
+
+        if (empty($segments)) {
+            throw new Exception("StegoDocument #{$stegoDocumentId} has no segments.");
+        }
+
+        $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'stegolock_dec_' . uniqid();
+        mkdir($tmpDir, 0700, true);
+
+        try {
+            // -----------------------------------------------------------------
+            // Steps 2 & 3: Download carriers from S3 and extract chunks
+            // -----------------------------------------------------------------
+            $reassemblySegments = [];
+
+            foreach ($segments as $segment) {
+                $carrier     = $this->persistence->findStegoCarrier($segment->stego_carrier_id);
+                $localCarrier = $tmpDir . DIRECTORY_SEPARATOR . "carrier_{$segment->segment_index}";
+
+                // Download the carrier from S3 (falls back to file_path if no s3_key).
+                if ($carrier->s3_key) {
+                    $this->cloud->download($carrier->s3_key, $localCarrier);
+                } else {
+                    $localCarrier = $carrier->file_path;
+                }
+
+                // Extract the encrypted chunk from the carrier.
+                $chunk = $this->stego->extract($localCarrier);
+
+                $reassemblySegments[] = [
+                    'index' => $segment->segment_index,
+                    'chunk' => $chunk,
+                    'hash'  => $segment->chunk_hash,
+                ];
+            }
+
+            // -----------------------------------------------------------------
+            // Step 4: Reassemble chunks (with hash integrity verification)
+            // -----------------------------------------------------------------
+            $ciphertext = $this->segmentation->reassemble($reassemblySegments, verifyHashes: true);
+
+            // -----------------------------------------------------------------
+            // Step 5: Re-derive DEK and decrypt
+            // -----------------------------------------------------------------
+            $documentRef = $stegoDoc->document_id ? (string) $stegoDoc->document_id : (string) $stegoDoc->id;
+            $dekResult   = $this->crypto->deriveDEK(
+                $masterKey,
+                $documentRef,
+                $stegoDoc->dek_salt,
+                $stegoDoc->dek_iterations
+            );
+
+            $plaintext = $this->crypto->decrypt(
+                $ciphertext,
+                $dekResult['dek'],
+                $stegoDoc->iv,
+                $stegoDoc->auth_tag
+            );
+
+            // -----------------------------------------------------------------
+            // Step 6: Verify document integrity hash
+            // -----------------------------------------------------------------
+            if (!$this->crypto->verifyHash($plaintext, $stegoDoc->hash_sha256)) {
+                throw new Exception('Document integrity check failed. Hash mismatch after decryption.');
+            }
+
+            // Log the decode operation.
+            $this->persistence->logAccess([
+                'user_id'     => $userId,
+                'action'      => 'stego_decode',
+                'resource'    => 'stego_document',
+                'resource_id' => $stegoDoc->id,
+                'payload'     => ['status' => 'success'],
+            ]);
+
+        } finally {
+            $this->cleanupDir($tmpDir);
+        }
+
+        return $plaintext;
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    private function resolveFileType(string $path): string
+    {
+        $mime = mime_content_type($path) ?: '';
+
+        if (str_starts_with($mime, 'image/')) {
+            return 'image';
+        }
+        if (str_starts_with($mime, 'audio/')) {
+            return 'audio';
+        }
+        if (str_starts_with($mime, 'text/')) {
+            return 'text';
+        }
+
+        return 'binary';
+    }
+
+    private function cleanupDir(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+
+        foreach (glob($dir . DIRECTORY_SEPARATOR . '*') as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
+
+        @rmdir($dir);
+    }
+}

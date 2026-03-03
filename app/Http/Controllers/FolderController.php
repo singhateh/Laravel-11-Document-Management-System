@@ -7,6 +7,7 @@ use App\Models\Folder;
 use Illuminate\Http\Request;
 use App\Http\Requests\StoreFolderRequest;
 use App\Services\FolderService;
+use Inertia\Inertia;
 
 class FolderController extends Controller
 {
@@ -16,11 +17,25 @@ class FolderController extends Controller
     }
 
 
+    public function index()
+    {
+        $folders = Folder::with(['categories', 'subfolders.categories', 'subfolders.subfolders'])
+            ->whereNull('parent_id')
+            ->orderBy('position')
+            ->get();
+
+        return Inertia::render('Folders/Index', [
+            'folders' => $folders,
+        ]);
+    }
+
     public function create()
     {
         $folders = Folder::with('categories', 'subfolders')->whereNull('parent_id')->get();
 
-        return view('folders.create', compact('folders'));
+        return Inertia::render('Folders/Create', [
+            'folders' => $folders,
+        ]);
     }
 
 
@@ -98,6 +113,8 @@ class FolderController extends Controller
     function getParentFolders()
     {
         $folders = Folder::with(['categories'])->whereNull('parent_id')->get();
-        return view('folders.table', compact('folders'))->render();
+        
+        // Return JSON data for React frontend instead of rendered HTML
+        return response()->json(['folders' => $folders]);
     }
 }

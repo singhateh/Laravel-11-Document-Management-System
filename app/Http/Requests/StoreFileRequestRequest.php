@@ -27,7 +27,6 @@ class StoreFileRequestRequest extends FormRequest
             'folder_id' => 'nullable|string|max:255',
             'tag_id' => 'nullable|string|max:255',
             'due_date_in_number' => 'nullable|string|max:255',
-            'due_date_in_word' => 'nullable|string|max:255',
             'note' => 'nullable|string|max:255',
         ];
     }
@@ -46,8 +45,6 @@ class StoreFileRequestRequest extends FormRequest
             'tag_id.max' => 'The tag ID field must not exceed 255 characters.',
             'due_date_in_number.string' => 'The due date in number field must be a string.',
             'due_date_in_number.max' => 'The due date in number field must not exceed 255 characters.',
-            'due_date_in_word.string' => 'The due date in word field must be a string.',
-            'due_date_in_word.max' => 'The due date in word field must not exceed 255 characters.',
             'note.string' => 'The note field must be a string.',
             'note.max' => 'The note field must not exceed 255 characters.',
         ];

@@ -19,7 +19,8 @@ return new class extends Migration
             $table->enum('visibility', ['public', 'private'])->default('public');
             $table->string('background_color')->nullable();
             $table->string('foreground_color')->nullable();
-            $table->string('tags')->nullable();
+            // 'tags' column removed — 1NF violation (multi-value field).
+            // Use the folder_tag pivot table instead.
             $table->timestamps();
             $table->softDeletes();
         });

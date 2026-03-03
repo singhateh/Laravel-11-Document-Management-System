@@ -18,7 +18,8 @@ return new class extends Migration
             $table->unsignedBigInteger('folder_id')->nullable();
             $table->unsignedBigInteger('tag_id')->nullable();
             $table->unsignedBigInteger('due_date_in_number')->nullable();
-            $table->string('due_date_in_word')->nullable();
+            // 'due_date_in_word' removed — 3NF violation (derived from due_date_in_number).
+            // Compute the human-readable label in the application layer.
             $table->longText('note')->nullable();
             $table->timestamps();
 

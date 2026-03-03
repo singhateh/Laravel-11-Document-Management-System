@@ -26,13 +26,15 @@ return new class extends Migration
                 ->onDelete('cascade') // or 'set null' depending on your requirements
                 ->onUpdate('cascade'); // or 'set null' depending on your requirements
 
-            $table->string('visibility')->default('public');
+            // Changed from string to enum to match folders.visibility (type consistency).
+            $table->enum('visibility', ['public', 'private'])->default('public');
             $table->bigInteger('share')->default(0);
             $table->bigInteger('download')->default(0);
             $table->string('email')->nullable();
             $table->string('url')->nullable();
             $table->string('contact')->nullable();
-            $table->string('owner')->nullable();
+            // Replaced free-text 'owner' with owner_id FK to users (3NF fix).
+            $table->foreignId('owner_id')->nullable()->constrained('users')->onDelete('set null');
             $table->timestamp('date')->nullable();
             $table->string('emojies')->nullable();
             $table->timestamps();

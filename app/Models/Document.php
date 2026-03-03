@@ -31,8 +31,27 @@ class Document extends Model
 
     protected $fillable = [
         'name', 'original_name', 'file_path', 'size', 'extension', 'folder_id', 'visibility', 'share', 'download', 'email',
-        'url', 'contact', 'owner', 'tags', 'date', 'emojies', 'position'
+        'url', 'contact', 'owner_id', 'date', 'emojies', 'position',
+        // AES-256-GCM encryption metadata
+        'is_encrypted', 'enc_iv', 'enc_auth_tag', 'enc_dek_salt', 'enc_dek_iterations', 'enc_hash_sha256',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_encrypted'       => 'boolean',
+            'enc_dek_iterations' => 'integer',
+        ];
+    }
+
+    /**
+     * Returns true if this document has a physical file on disk that can be decrypted.
+     * URL-type documents (YouTube links, etc.) have no file to decrypt.
+     */
+    public function hasPhysicalFile(): bool
+    {
+        return empty($this->url) && !empty($this->file_path);
+    }
 
     public function getFileIcon()
     {
@@ -53,9 +72,33 @@ class Document extends Model
         return $this->visibility;
     }
 
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_id');
+    }
+
     public function tags()
     {
         return $this->belongsToMany(Tag::class);
+    }
+
+    public function comments()
+    {
+        return $this->hasMany(Comment::class)->whereNull('parent_id')->latest();
+    }
+
+    // -------------------------------------------------------------------------
+    // StegoLock relationships
+    // -------------------------------------------------------------------------
+
+    public function stegoDocument()
+    {
+        return $this->hasOne(StegoDocument::class);
+    }
+
+    public function isStegoed(): bool
+    {
+        return $this->stegoDocument()->exists();
     }
 
     // Method to delete associated file from public path

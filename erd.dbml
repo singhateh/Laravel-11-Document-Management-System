@@ -1,0 +1,375 @@
+// ============================================================
+// AUTH & SESSION TABLES
+// ============================================================
+
+Table users {
+  id bigint [pk, increment]
+  name varchar [not null]
+  username varchar [unique]
+  email varchar [unique, not null]
+  email_verified_at timestamp
+  password varchar [not null]
+  remember_token varchar
+  avatar varchar
+  role "enum('user','owner','admin')" [default: 'user']
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table password_reset_tokens {
+  email varchar [pk]
+  token varchar [not null]
+  created_at timestamp
+}
+
+Table sessions {
+  id varchar [pk]
+  user_id bigint [ref: > users.id]
+  ip_address varchar
+  user_agent text
+  payload longtext [not null]
+  last_activity int [not null]
+}
+
+Table personal_access_tokens {
+  id bigint [pk, increment]
+  tokenable_type varchar [not null]
+  tokenable_id bigint [not null]
+  name text [not null]
+  token varchar(64) [unique, not null]
+  abilities text
+  last_used_at timestamp
+  expires_at timestamp
+  created_at timestamp
+  updated_at timestamp
+}
+
+// ============================================================
+// QUEUE & CACHE TABLES
+// ============================================================
+
+Table jobs {
+  id bigint [pk, increment]
+  queue varchar [not null]
+  payload longtext [not null]
+  attempts tinyint [not null]
+  reserved_at int
+  available_at int [not null]
+  created_at int [not null]
+}
+
+Table job_batches {
+  id varchar [pk]
+  name varchar [not null]
+  total_jobs int [not null]
+  pending_jobs int [not null]
+  failed_jobs int [not null]
+  failed_job_ids longtext [not null]
+  options mediumtext
+  cancelled_at int
+  created_at int [not null]
+  finished_at int
+}
+
+Table failed_jobs {
+  id bigint [pk, increment]
+  uuid varchar [unique, not null]
+  connection text [not null]
+  queue text [not null]
+  payload longtext [not null]
+  exception longtext [not null]
+  failed_at timestamp [not null]
+}
+
+Table cache {
+  key varchar [pk]
+  value mediumtext [not null]
+  expiration int [not null]
+}
+
+Table cache_locks {
+  key varchar [pk]
+  owner varchar [not null]
+  expiration int [not null]
+}
+
+// ============================================================
+// ACL & AUDIT TABLES
+// ============================================================
+
+Table role_grants {
+  id bigint [pk, increment]
+  role varchar [not null]
+  permission varchar [not null]
+  resource varchar
+  user_id bigint [ref: > users.id]
+  is_granted boolean [default: true]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (role, permission, resource, user_id) [unique]
+  }
+}
+
+Table access_logs {
+  id bigint [pk, increment]
+  user_id bigint [ref: > users.id]
+  action varchar [not null]
+  resource varchar
+  resource_id bigint
+  ip_address varchar
+  user_agent varchar
+  method varchar
+  url varchar
+  status_code int
+  payload json
+  accessed_at timestamp [default: `CURRENT_TIMESTAMP`]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (user_id, accessed_at)
+    (resource, resource_id)
+  }
+}
+
+// ============================================================
+// CORE CONTENT TABLES
+// ============================================================
+
+Table folders {
+  id bigint [pk, increment]
+  position bigint [default: 0]
+  name varchar [not null]
+  parent_id bigint [ref: > folders.id]
+  visibility "enum('public','private')" [default: 'public']
+  background_color varchar
+  foreground_color varchar
+  // NOTE: 'tags' varchar column removed — 1NF violation.
+  //       Use folder_tag pivot table instead.
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+}
+
+Table documents {
+  id bigint [pk, increment]
+  position bigint [default: 0]
+  name varchar
+  original_name varchar
+  file_path varchar
+  size bigint
+  extension varchar
+  folder_id bigint [ref: > folders.id]
+  // FIX: Changed from varchar to enum to match folders.visibility (type consistency)
+  visibility "enum('public','private')" [default: 'public']
+  share bigint [default: 0]
+  download bigint [default: 0]
+  email varchar
+  url varchar
+  contact varchar
+  // FIX: Replaced free-text 'owner varchar' with owner_id FK to users
+  //      to eliminate transitive dependency (3NF): document → owner name → user record
+  owner_id bigint [ref: > users.id]
+  date timestamp
+  emojies varchar
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+}
+
+Table comments {
+  id bigint [pk, increment]
+  document_id bigint [not null, ref: > documents.id]
+  user_id bigint [not null, ref: > users.id]
+  content text [not null]
+  parent_id bigint [ref: > comments.id]
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+}
+
+// ============================================================
+// TAXONOMY TABLES
+// ============================================================
+
+Table categories {
+  id bigint [pk, increment]
+  name varchar [not null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table tags {
+  id bigint [pk, increment]
+  name varchar [not null]
+  background_color varchar
+  foreground_color varchar
+  // One tag belongs to one category (direct FK — normalized; see note below)
+  category_id bigint [ref: > categories.id]
+  created_at timestamp
+  updated_at timestamp
+}
+
+// NOTE: 'category_tag' pivot table removed — it was redundant with tags.category_id.
+//       Both expressed the same tag→category relationship, creating an update anomaly risk.
+//       tags.category_id alone is sufficient for the one-to-many (category → tags) relation.
+
+// ---- Pivot Tables ----
+
+Table folder_tag {
+  id bigint [pk, increment]
+  folder_id bigint [not null, ref: > folders.id]
+  tag_id bigint [not null, ref: > tags.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (folder_id, tag_id) [unique]
+  }
+}
+
+Table document_tag {
+  id bigint [pk, increment]
+  document_id bigint [not null, ref: > documents.id]
+  tag_id bigint [not null, ref: > tags.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (document_id, tag_id) [unique]
+  }
+}
+
+Table category_folder {
+  id bigint [pk, increment]
+  category_id bigint [not null, ref: > categories.id]
+  folder_id bigint [not null, ref: > folders.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (category_id, folder_id) [unique]
+  }
+}
+
+// ============================================================
+// NOTIFICATIONS & SHARING TABLES
+// ============================================================
+
+Table notifications {
+  id bigint [pk, increment]
+  user_id varchar [not null]
+  user_type varchar [not null]
+  activity_type varchar [not null]
+  model_type varchar [not null]
+  model_id varchar [not null]
+  message longtext
+  status "enum('UNREAD','READ')" [default: 'UNREAD']
+  dismiss_status "enum('UNDISMISSED','DISMISSED')" [default: 'UNDISMISSED']
+  created_by_id varchar [not null]
+  created_by_type varchar [not null]
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+
+  indexes {
+    (user_id, status, dismiss_status)
+  }
+}
+
+Table share_documents {
+  id bigint [pk, increment]
+  name varchar
+  slug varchar
+  token varchar [unique, not null]
+  shared_id varchar
+  url varchar
+  valid_until date
+  visibility "enum('public','private')" [default: 'public']
+  can_download "enum('yes','no')" [default: 'yes']
+  can_upload "enum('yes','no')" [default: 'no']
+  user_type varchar [not null]
+  user_id bigint [not null]
+  share_type varchar [not null]
+  share_id bigint [not null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table file_requests {
+  id bigint [pk, increment]
+  name varchar
+  request_to varchar
+  folder_id bigint [ref: > folders.id]
+  tag_id bigint [ref: > tags.id]
+  due_date_in_number bigint
+  // NOTE: 'due_date_in_word' removed — 3NF violation.
+  //       It was derived from due_date_in_number (e.g. 3 → "3 days").
+  //       Derived values must not be stored; compute in application layer.
+  note longtext
+  created_at timestamp
+  updated_at timestamp
+}
+
+// ============================================================
+// STEGANOGRAPHY TABLES
+// ============================================================
+
+Table stego_carriers {
+  id bigint [pk, increment]
+  name varchar [not null]
+  file_path varchar [not null]
+  file_type varchar [not null]
+  mime_type varchar
+  size bigint [not null]
+  s3_key varchar
+  s3_url varchar
+  uploaded_by bigint [ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (file_type)
+    (uploaded_by)
+  }
+}
+
+Table stego_documents {
+  id bigint [pk, increment]
+  document_id bigint [ref: > documents.id]
+  user_id bigint [not null, ref: > users.id]
+  ciphertext text [not null]
+  iv varchar(64) [not null]
+  auth_tag varchar(64) [not null]
+  hash_sha256 varchar(64) [not null]
+  dek_salt varchar(64)
+  dek_iterations int [default: 10000]
+  s3_key varchar
+  s3_url varchar
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (document_id)
+    (user_id)
+  }
+}
+
+Table stego_segments {
+  id bigint [pk, increment]
+  stego_document_id bigint [not null, ref: > stego_documents.id]
+  stego_carrier_id bigint [not null, ref: > stego_carriers.id]
+  segment_index tinyint [not null]
+  encrypted_chunk text [not null]
+  s3_key varchar
+  chunk_hash varchar [not null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (stego_document_id, segment_index)
+    (stego_carrier_id)
+  }
+}

@@ -6,9 +6,11 @@ use App\Models\User;
 use App\Models\Folder;
 use App\Models\Document;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Http\Requests\StoreDocumentRequest;
 use App\Services\DocumentService;
+use Inertia\Inertia;
 
 
 class DocumentController extends Controller
@@ -28,7 +30,12 @@ class DocumentController extends Controller
         $owners = User::get(['id', 'name', 'email']);
         $rightFolders = Folder::get(['id', 'name']);
 
-        return view('documents.index', compact('documents', 'folders', 'owners', 'rightFolders'));
+        return Inertia::render('Documents/Index', [
+            'documents' => $documents,
+            'folders' => $folders,
+            'owners' => $owners,
+            'rightFolders' => $rightFolders,
+        ]);
     }
 
 
@@ -63,18 +70,12 @@ class DocumentController extends Controller
         $folderInfo =  $this->documentService->getFolderFiles($folder,  $tags)['folderInfo'];
         $folderData =  $this->documentService->getFolderFiles($folder,  $tags)['folderData'];
 
-        // dd($folderInfo);
-
-        
-        $view = view('documents.contents', ['documents' => $documents])->render();
-        $folderInfo = view('folders.info', ['folderInfo' => $folderInfo])->render();
-        $folders = view('layouts.sidebar', ['folders' => $folderData])->render();
-        $categoriesView = view('folders.categories', ['folder' => $folder])->render();
-
-
+        // Return JSON data for React/Inertia frontend
         return response()->json([
-            'html' => $view, 'folderInfoHml' => $folderInfo,
-            'folder_id' => $folder, 'folderHtml' => $folders, 'categoriesHtml' => $categoriesView
+            'documents' => $documents,
+            'folderInfo' => $folderInfo,
+            'folders' => $folderData,
+            'folder_id' => $folder,
         ]);
     }
 
@@ -83,9 +84,8 @@ class DocumentController extends Controller
     {
         $documents = $this->documentService->setFilterDocumentByTag($request->folder,  $request->tags ?? []);
 
-        $view = view('documents.contents', ['documents' => $documents])->render();
-
-        return response()->json(['html' => $view]);
+        // Return JSON data for React frontend
+        return response()->json(['documents' => $documents]);
     }
 
 
@@ -115,9 +115,11 @@ class DocumentController extends Controller
     {
         $notifications = $this->documentService->setSendDocumentEmail($request);
 
-        $view = view('documents.comments', compact('notifications'))->render();
-
-        return response()->json(['message' => 'Email sent successfully!', 'html' => $view]);
+        // Return JSON data for React frontend
+        return response()->json([
+            'message' => 'Email sent successfully!',
+            'notifications' => $notifications
+        ]);
     }
 
 
@@ -125,9 +127,8 @@ class DocumentController extends Controller
     {
         $notifications = $this->documentService->getDocumentNotifications($request->document_id);
 
-        $view = view('documents.comments', compact('notifications'))->render();
-
-        return response()->json(['html' => $view]);
+        // Return JSON data for React frontend
+        return response()->json(['notifications' => $notifications]);
     }
 
 
@@ -139,6 +140,86 @@ class DocumentController extends Controller
         return response()->json(['message' => 'Files uploaded successfully', 'url' => route('getFiles', $folderId)], 200);
     }
 
+    public function show(Document $document)
+    {
+        $document->load(['tags', 'comments']);
+
+        return Inertia::render('Documents/Show', [
+            'document' => $document,
+        ]);
+    }
+
+    /**
+     * Download a document, decrypting it first if it was stored with AES-256-GCM.
+     *
+     * - Encrypted documents are decrypted in memory and streamed to the browser.
+     * - Legacy plaintext documents are served directly.
+     * - URL-type documents (YouTube, etc.) redirect to the external URL.
+     */
+    public function download(Document $document)
+    {
+        $user = Auth::user();
+
+        // Only the owner or admins may download private documents.
+        if ($document->visibility === 'private' && $document->owner_id !== $user->id) {
+            abort(403, 'You do not have permission to download this document.');
+        }
+
+        // For link-type documents, redirect to the external URL.
+        if (!empty($document->url)) {
+            return redirect($document->url);
+        }
+
+        $absolutePath = public_path($document->file_path);
+
+        if (!file_exists($absolutePath)) {
+            abort(404, 'The requested file could not be found on the server.');
+        }
+
+        try {
+            $content = $this->documentService->decryptDocumentContent($document);
+        } catch (\Exception $e) {
+            abort(500, 'Failed to retrieve document: ' . $e->getMessage());
+        }
+
+        $filename = $document->original_name ?? $document->name;
+        $mimeType = mime_content_type($absolutePath) ?: 'application/octet-stream';
+
+        return response($content, 200, [
+            'Content-Type'              => $mimeType,
+            'Content-Disposition'       => 'attachment; filename="' . addslashes($filename) . '"',
+            'Content-Length'            => strlen($content),
+            'Cache-Control'             => 'no-store, no-cache, must-revalidate',
+            'X-Encryption-Status'       => $document->is_encrypted ? 'AES-256-GCM' : 'plaintext',
+        ]);
+    }
+
+    public function update(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'visibility' => 'sometimes|in:public,private',
+            'folder_id' => 'nullable|exists:folders,id',
+        ]);
+
+        $document->update($validated);
+
+        return response()->json([
+            'message' => 'Document updated successfully',
+            'document' => $document->fresh(['tags']),
+        ]);
+    }
+
+    public function destroy(Document $document)
+    {
+        // Delete physical file
+        $document->deleteFile();
+        
+        // Delete database record
+        $document->delete();
+
+        return response()->json(['message' => 'Document deleted successfully']);
+    }
 
     function changeFile(Request $request)
     {

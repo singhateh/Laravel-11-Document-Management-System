@@ -14,14 +14,26 @@ function isImageFileType(fileType) {
     return imageExtensions.includes(lowerCaseFileType);
 }
 
+function normalizeFolderUrl(url) {
+    if (!url) return url;
+
+    try {
+        var parsed = new URL(url, window.location.origin);
+        return parsed.pathname + parsed.search;
+    } catch (e) {
+        return url;
+    }
+}
+
 // Document ready event handler
 $(document).ready(function () {
-    var selectedFolder = localStorage.getItem('selectedFolder');
+    var selectedFolder = normalizeFolderUrl(localStorage.getItem('selectedFolder'));
 
     if (selectedFolder) {
+        localStorage.setItem('selectedFolder', selectedFolder);
         fetchFiles(selectedFolder, 'folder');
     } else {
-        var defaultFolder = $('.folders li:first-child a').attr('href');
+        var defaultFolder = normalizeFolderUrl($('.folders li:first-child a').attr('href'));
         fetchFiles(defaultFolder, 'folder');
     }
 
