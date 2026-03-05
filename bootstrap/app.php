@@ -17,7 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
 
-        //
+        // Add StartSession to API routes so that session('stego_mkd') is
+        // available in stateless API requests (required for StegoLock MKD).
+        $middleware->api(prepend: [
+            \Illuminate\Session\Middleware\StartSession::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         // ── W3-T11: Centralized JSON error responses for all API routes ────────

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
 
 class StegoDocument extends Model
 {
@@ -13,14 +14,28 @@ class StegoDocument extends Model
         'document_id',
         'user_id',
         'ciphertext',
-        'iv',
-        'auth_tag',
-        'hash_sha256',
-        'dek_salt',
-        'dek_iterations',
+        'stego_iv',
+        'stego_auth_tag',
+        'stego_hash_sha256',
+        'stego_dek_salt',
+        'stego_dek_iter',
         's3_key',
-        's3_url',
     ];
+
+    // -------------------------------------------------------------------------
+    // Computed attributes
+    // -------------------------------------------------------------------------
+
+    /**
+     * Derive s3_url from s3_key at runtime so call sites need no change.
+     * s3_url is no longer stored in the DB (3NF fix — it is a function of s3_key).
+     */
+    public function getS3UrlAttribute(): ?string
+    {
+        return $this->s3_key
+            ? Storage::disk('s3')->url($this->s3_key)
+            : null;
+    }
 
     // -------------------------------------------------------------------------
     // Relationships

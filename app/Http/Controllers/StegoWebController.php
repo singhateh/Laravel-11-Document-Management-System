@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Concerns\HasStegoEncoding;
 use App\Models\Document;
 use App\Models\StegoDocument;
 use App\Services\Stego\StegoDocumentService;
@@ -12,6 +13,8 @@ use Inertia\Inertia;
 
 class StegoWebController extends Controller
 {
+    use HasStegoEncoding;
+
     public function __construct(protected StegoDocumentService $stegoService)
     {
         $this->middleware('auth');
@@ -51,48 +54,45 @@ class StegoWebController extends Controller
     {
         $request->validate([
             'document_id'  => ['required', 'integer', 'exists:documents,id'],
-            'master_key'   => ['required', 'string', 'min:8'],
             'carriers'     => ['required', 'array', 'min:1'],
-            'carriers.*'   => ['required', 'file', 'mimes:png,bmp', 'max:20480'],
+            'carriers.*'   => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
         ]);
+
+        // Master Key is derived at login and kept server-side only.
+        $masterKey = $this->resolveSessionKey();
+        if ($masterKey === null) {
+            return back()->withErrors(['session' => 'Session expired. Please log in again to obtain a fresh Master Key.']);
+        }
 
         $user = Auth::user();
 
         // Resolve the source document path
-        $document   = Document::findOrFail($request->document_id);
-        $sourcePath = storage_path('app/' . $document->file_path);
-
-        if (!file_exists($sourcePath)) {
-            return back()->withErrors(['document_id' => 'Source document file not found on disk.']);
-        }
-
-        $plaintext = file_get_contents($sourcePath);
-
-        // Save uploaded carrier files to temp paths
-        $carrierPaths = [];
-        foreach ($request->file('carriers') as $carrier) {
-            $tmp = tempnam(sys_get_temp_dir(), 'carrier_');
-            $carrier->move(dirname($tmp), basename($tmp));
-            $carrierPaths[] = $tmp;
-        }
+        $document = Document::findOrFail($request->document_id);
 
         try {
-            $stegoDoc = $this->stegoService->encode(
+            $plaintext = $this->readDocumentPlaintext($document);
+        } catch (\RuntimeException $e) {
+            return back()->withErrors(['document_id' => $e->getMessage()]);
+        }
+
+        $carrierPaths = $this->storeCarriersTmp($request->file('carriers'));
+
+        try {
+            $result   = $this->stegoService->encode(
                 $user->id,
                 $plaintext,
-                $request->master_key,
+                $masterKey,
                 $carrierPaths,
                 $document->id
             );
+            $stegoDoc = $result['stego_document'];
 
             return redirect()->route('stego.index')
                 ->with('success', "Document encoded and hidden in " . count($carrierPaths) . " carrier(s).");
         } catch (\Exception $e) {
             return back()->withErrors(['encode' => 'Encoding failed: ' . $e->getMessage()]);
         } finally {
-            foreach ($carrierPaths as $p) {
-                if (file_exists($p)) @unlink($p);
-            }
+            $this->releaseCarriers($carrierPaths);
         }
     }
 
@@ -127,8 +127,13 @@ class StegoWebController extends Controller
     {
         $request->validate([
             'stego_document_id' => ['required', 'integer'],
-            'master_key'        => ['required', 'string', 'min:8'],
         ]);
+
+        // Master Key is derived at login and kept server-side only.
+        $masterKey = $this->resolveSessionKey();
+        if ($masterKey === null) {
+            return back()->withErrors(['session' => 'Session expired. Please log in again to obtain a fresh Master Key.']);
+        }
 
         $user = Auth::user();
 
@@ -141,11 +146,11 @@ class StegoWebController extends Controller
         try {
             $plaintext = $this->stegoService->decode(
                 $request->stego_document_id,
-                $request->master_key,
+                $masterKey,
                 $user->id
             );
 
-            $filename = ($stegoDoc->document->name ?? 'decoded') . '.' . ($stegoDoc->document->extension ?? 'bin');
+            $filename = $this->buildDecodeFilename($stegoDoc);
 
             // Write to temp file and return as download
             $tmp = tempnam(sys_get_temp_dir(), 'stego_out_');

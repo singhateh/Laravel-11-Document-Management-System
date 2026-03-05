@@ -24,6 +24,7 @@ class User extends Authenticatable
         'password',
         'avatar',
         'role',
+        'mkd_salt',   // PBKDF2 salt for Master Key Derivation — generated at registration
     ];
 
     /**

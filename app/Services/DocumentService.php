@@ -179,16 +179,29 @@ class DocumentService
         int $folderId,
         string $visibility = 'public'
     ): Document {
+        // $file->getSize() throws RuntimeException if the temp file has already been
+        // moved (SplFileInfo stat fails on the now-missing temp path).  Fall back to
+        // reading the size from the already-moved destination file instead.
+        try {
+            $size = $file->getSize();
+            if ($size === false || $size === null || $size < 0) {
+                throw new \RuntimeException('Invalid size from getSize()');
+            }
+        } catch (\RuntimeException $e) {
+            $absolutePath = public_path($filePath);
+            $size = file_exists($absolutePath) ? filesize($absolutePath) : 0;
+        }
+
         $document = Document::create([
             'name'          => $file->getClientOriginalName(),
             'original_name' => $file->getClientOriginalName(),
             'extension'     => $file->getClientOriginalExtension(),
             'file_path'     => $filePath,
-            'size'          => $file->getSize(),
+            'size'          => (int) $size,
             'folder_id'     => $folderId,
             'visibility'    => $visibility,
             'owner_id'      => Auth::id(),
-            'date'          => now(),
+            'document_date' => now(),
         ]);
 
         if ($this->isEncryptionEnabled()) {
@@ -244,9 +257,10 @@ class DocumentService
             return [];
         }
 
-        return DB::table('document_tag')
+        return DB::table('taggables')
+            ->where('taggable_type', \App\Models\Document::class)
             ->whereIn('tag_id', $tags)
-            ->pluck('document_id')
+            ->pluck('taggable_id')
             ->all();
     }
 
@@ -305,14 +319,13 @@ class DocumentService
         $tagUser = User::whereEmail($request->user_email)->first();
 
         Notification::create([
-            'user_id' => $tagUser?->id,
-            'user_type' => $tagUser ? User::class : Null,
-            'activity_type' => $request->type,
-            'model_type' => Document::class,
-            'model_id' => $request->document_id,
-            'message' => $request->content,
-            'created_by_type' => User::class ?? Null,
-            'created_by_id' => $auth->id ?? Null,
+            'notifiable_id'      => $tagUser?->id,
+            'notifiable_type'    => $tagUser ? User::class : null,
+            'activity_type'      => $request->type,
+            'model_type'         => Document::class,
+            'model_id'           => $request->document_id,
+            'message'            => $request->content,
+            'created_by_user_id' => $auth->id,
         ]);
 
         if ($request->user_email) {
@@ -515,7 +528,7 @@ class DocumentService
             'folder_id'     => $folderId,
             'visibility'    => $visibility,
             'owner_id'      => Auth::id(),
-            'date'          => now(),
+            'document_date' => now(),
         ]);
     }
 

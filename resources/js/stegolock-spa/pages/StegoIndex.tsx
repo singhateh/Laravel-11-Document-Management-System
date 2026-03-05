@@ -8,7 +8,7 @@ interface StegoDoc {
     document: { id: number; name: string; extension: string } | null;
     segments_count: number;
     created_at: string;
-    hash_sha256: string;
+    stego_hash_sha256: string;
 }
 
 export default function StegoIndex() {
@@ -74,7 +74,7 @@ export default function StegoIndex() {
                                         </div>
                                     </td>
                                     <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-600">{d.segments_count}</td>
-                                    <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-400">{d.hash_sha256?.slice(0, 16)}…</td>
+                                    <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-400">{d.stego_hash_sha256?.slice(0, 16)}…</td>
                                     <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-500">{new Date(d.created_at).toLocaleDateString()}</td>
                                     <td className="whitespace-nowrap px-5 py-4 text-right">
                                         <div className="flex items-center justify-end gap-2">

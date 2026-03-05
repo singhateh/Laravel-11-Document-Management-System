@@ -1,14 +1,9 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DocumentController as ApiDocumentController;
-use App\Http\Controllers\StegoWebController;
-use App\Models\Document;
-use App\Models\Folder;
-use App\Models\Category;
-use App\Models\Tag;
-use App\Models\StegoDocument;
-use Illuminate\Support\Facades\Auth;
+use App\Http\Controllers\Api\StegoDocumentController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -79,50 +74,23 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
     Route::prefix('stego')->name('api.stego.')->group(function () {
 
         // List the authenticated user's stego documents
-        Route::get('/documents', function () {
-            $docs = Auth::user()
-                ->stegoDocuments()
-                ->with('document')
-                ->latest()
-                ->paginate(20);
-
-            return response()->json($docs);
-        })->name('documents.index');
+        Route::get('/documents',     [StegoDocumentController::class, 'index'])->name('documents.index');
 
         // Retrieve metadata for a single stego document
-        Route::get('/documents/{id}', function (int $id) {
-            $doc = Auth::user()
-                ->stegoDocuments()
-                ->with(['document', 'segments'])
-                ->findOrFail($id);
+        Route::get('/documents/{id}', [StegoDocumentController::class, 'show'])->name('documents.show');
 
-            return response()->json($doc);
-        })->name('documents.show');
+        // Encode a document (multipart form-data) — returns JSON { stego_document_id, quality_metrics }
+        Route::post('/encode', [StegoDocumentController::class, 'encode'])->name('encode');
 
-        // Encode a document (multipart form-data, same logic as web)
-        Route::post('/encode', [StegoWebController::class, 'encode'])->name('encode');
-
-        // Decode — returns file download
-        Route::post('/decode', [StegoWebController::class, 'decode'])->name('decode');
+        // Decode — extracts and decrypts, returns file download
+        Route::post('/decode', [StegoDocumentController::class, 'decode'])->name('decode');
 
     });
 
     // SPA convenience aliases
-    Route::get('/user', [AuthController::class, 'me'])->name('api.user');
-
-    // GET /api/stego — alias for stego/documents (used by SPA)
-    Route::get('/stego', function () {
-        return response()->json(
-            Auth::user()->stegoDocuments()->with(['document:id,name,extension'])->withCount('segments')->latest()->paginate(20)
-        );
-    });
-
-    // DELETE /api/stego/{id}
-    Route::delete('/stego/{id}', function (int $id) {
-        $doc = Auth::user()->stegoDocuments()->findOrFail($id);
-        $doc->delete();
-        return response()->json(['message' => 'Deleted.']);
-    });
+    Route::get('/user',  [AuthController::class, 'me'])->name('api.user');
+    Route::get('/stego', [StegoDocumentController::class, 'index']);
+    Route::delete('/stego/{id}', [StegoDocumentController::class, 'destroy']);
 
     // --------------------------------------------------------------------
     // Document REST endpoints  (W3-T01, W3-T06, W3-T09)
@@ -145,35 +113,15 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
      *   Paginated lightweight list used by the SPA Encode dropdown.
      *   Returns: 200 paginated Document objects (id, name, extension, size)
      */
-    Route::post('/documents',      [ApiDocumentController::class, 'store'])->name('api.documents.store');
-    Route::get('/documents/{id}',  [ApiDocumentController::class, 'show'])->name('api.documents.show')
+    Route::post('/documents',     [ApiDocumentController::class, 'store'])->name('api.documents.store');
+    Route::get('/documents/{id}', [ApiDocumentController::class, 'show'])->name('api.documents.show')
         ->whereNumber('id');
-
-    // GET /api/documents — lightweight list for SPA Encode dropdown (W3-T09)
-    Route::get('/documents', function () {
-        return response()->json(Document::select('id', 'name', 'extension', 'size')->latest()->paginate(50));
-    })->name('api.documents.index');
+    Route::get('/documents',      [ApiDocumentController::class, 'index'])->name('api.documents.index');
 
     // Dashboard stats / recent (for SPA)
     Route::prefix('dashboard')->group(function () {
-        Route::get('/stats', function () {
-            $user = Auth::user();
-            return response()->json([
-                'documents'       => Document::count(),
-                'folders'         => Folder::count(),
-                'categories'      => Category::count(),
-                'tags'            => Tag::count(),
-                'stego_documents' => StegoDocument::where('user_id', $user->id)->count(),
-            ]);
-        });
-        Route::get('/recent', function () {
-            $docs = Document::with('tags:id,name')
-                ->withExists('stegoDocument as is_stegoed')
-                ->latest()
-                ->take(8)
-                ->get(['id', 'name', 'extension', 'size', 'created_at']);
-            return response()->json($docs);
-        });
+        Route::get('/stats',  [DashboardController::class, 'stats']);
+        Route::get('/recent', [DashboardController::class, 'recent']);
     });
 
 });

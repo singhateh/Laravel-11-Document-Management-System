@@ -32,13 +32,12 @@ class PersistenceService
      *   document_id: int|null,
      *   user_id: int,
      *   ciphertext: string,
-     *   iv: string,
-     *   auth_tag: string,
-     *   hash_sha256: string,
-     *   dek_salt: string|null,
-     *   dek_iterations: int,
+     *   stego_iv: string,
+     *   stego_auth_tag: string,
+     *   stego_hash_sha256: string,
+     *   stego_dek_salt: string|null,
+     *   stego_dek_iter: int,
      *   s3_key: string|null,
-     *   s3_url: string|null,
      * } $data
      * @return StegoDocument
      */
@@ -110,7 +109,6 @@ class PersistenceService
      *   mime_type: string|null,
      *   size: int,
      *   s3_key: string|null,
-     *   s3_url: string|null,
      *   uploaded_by: int,
      * } $data
      * @return StegoCarrier

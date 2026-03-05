@@ -60,7 +60,7 @@ class StegoDocumentService
         string $masterKey,
         array $carrierPaths,
         ?int $documentId = null
-    ): \App\Models\StegoDocument {
+    ): array {
         if (empty($carrierPaths)) {
             throw new Exception('At least one carrier file is required for encoding.');
         }
@@ -83,25 +83,24 @@ class StegoDocumentService
         // -----------------------------------------------------------------
         // Step 4 & 5: Embed each chunk into its carrier and upload to S3
         // -----------------------------------------------------------------
-        $tmpDir    = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'stegolock_' . uniqid();
-        mkdir($tmpDir, 0700, true);
+        $tmpDir = $this->makeTmpDir('stegolock_');
 
-        $carrierRecords = [];
-        $segmentRecords = [];
+        $carrierRecords  = [];
+        $segmentRecords  = [];
+        $qualityMetrics  = [];   // keyed by segment index
 
         try {
             // First, persist the StegoDocument shell so we have an ID for key naming.
             $stegoDoc = $this->persistence->createStegoDocument([
-                'document_id'    => $documentId,
-                'user_id'        => $userId,
-                'ciphertext'     => $encrypted['ciphertext'],
-                'iv'             => $encrypted['iv'],
-                'auth_tag'       => $encrypted['auth_tag'],
-                'hash_sha256'    => $hash,
-                'dek_salt'       => $dekResult['salt'],
-                'dek_iterations' => $dekResult['iterations'],
-                's3_key'         => null,
-                's3_url'         => null,
+                'document_id'      => $documentId,
+                'user_id'          => $userId,
+                'ciphertext'       => $encrypted['ciphertext'],
+                'stego_iv'         => $encrypted['iv'],
+                'stego_auth_tag'   => $encrypted['auth_tag'],
+                'stego_hash_sha256'=> $hash,
+                'stego_dek_salt'   => $dekResult['salt'],
+                'stego_dek_iter'   => $dekResult['iterations'],
+                's3_key'           => null,
             ]);
 
             foreach ($segments as $seg) {
@@ -111,6 +110,10 @@ class StegoDocumentService
 
                 // Embed the encrypted chunk into the carrier.
                 $this->stego->embed($carrierPath, $seg['chunk'], $outputPath);
+
+                // PSNR quality gate + metric collection (image carriers only).
+                $psnrValue          = $this->measurePsnrOrFail($carrierPath, $outputPath);
+                $qualityMetrics[$idx] = $this->buildQualityMetric($carrierPath, $psnrValue);
 
                 // Upload the modified carrier to S3.
                 $s3Key    = $this->cloud->carrierKey($userId, "doc{$stegoDoc->id}_seg{$idx}_" . basename($carrierPath));
@@ -124,7 +127,7 @@ class StegoDocumentService
                     'mime_type'   => mime_content_type($carrierPath) ?: null,
                     'size'        => filesize($outputPath),
                     's3_key'      => $s3Result['s3_key'],
-                    's3_url'      => $s3Result['s3_url'],
+                    'psnr'        => $psnrValue,
                     'uploaded_by' => $userId,
                 ]);
 
@@ -159,7 +162,10 @@ class StegoDocumentService
             $this->cleanupDir($tmpDir);
         }
 
-        return $stegoDoc->fresh();
+        return [
+            'stego_document'  => $stegoDoc->fresh(),
+            'quality_metrics' => array_values($qualityMetrics),
+        ];
     }
 
     // =========================================================================
@@ -187,8 +193,7 @@ class StegoDocumentService
             throw new Exception("StegoDocument #{$stegoDocumentId} has no segments.");
         }
 
-        $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'stegolock_dec_' . uniqid();
-        mkdir($tmpDir, 0700, true);
+        $tmpDir = $this->makeTmpDir('stegolock_dec_');
 
         try {
             // -----------------------------------------------------------------
@@ -229,21 +234,21 @@ class StegoDocumentService
             $dekResult   = $this->crypto->deriveDEK(
                 $masterKey,
                 $documentRef,
-                $stegoDoc->dek_salt,
-                $stegoDoc->dek_iterations
+                $stegoDoc->stego_dek_salt,
+                $stegoDoc->stego_dek_iter
             );
 
             $plaintext = $this->crypto->decrypt(
                 $ciphertext,
                 $dekResult['dek'],
-                $stegoDoc->iv,
-                $stegoDoc->auth_tag
+                $stegoDoc->stego_iv,
+                $stegoDoc->stego_auth_tag
             );
 
             // -----------------------------------------------------------------
             // Step 6: Verify document integrity hash
             // -----------------------------------------------------------------
-            if (!$this->crypto->verifyHash($plaintext, $stegoDoc->hash_sha256)) {
+            if (!$this->crypto->verifyHash($plaintext, $stegoDoc->stego_hash_sha256)) {
                 throw new Exception('Document integrity check failed. Hash mismatch after decryption.');
             }
 
@@ -264,8 +269,61 @@ class StegoDocumentService
     }
 
     // =========================================================================
-    // Helpers
+    // Private helpers
     // =========================================================================
+
+    /**
+     * Create a unique temporary directory. Throws on failure.
+     */
+    private function makeTmpDir(string $prefix): string
+    {
+        $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $prefix . uniqid();
+        if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
+            throw new Exception("Failed to create temp directory: {$dir}");
+        }
+        return $dir;
+    }
+
+    /**
+     * Measure PSNR for an image carrier after embedding.
+     * Returns null for non-image carriers (PSNR is not meaningful there).
+     * Throws Exception if measured PSNR falls below 40 dB.
+     *
+     * @throws Exception
+     */
+    private function measurePsnrOrFail(string $carrierPath, string $outputPath): ?float
+    {
+        $mime = mime_content_type($carrierPath) ?: '';
+
+        if (!str_starts_with($mime, 'image/')) {
+            return null;
+        }
+
+        $metrics = $this->stego->psnr($carrierPath, $outputPath);
+
+        if (!$metrics['threshold_40db']) {
+            throw new Exception(sprintf(
+                'Carrier "%s": PSNR %.2f dB is below the 40 dB imperceptibility threshold. '
+                . 'Choose a larger carrier image.',
+                basename($carrierPath),
+                $metrics['psnr']
+            ));
+        }
+
+        return (float) $metrics['psnr'];
+    }
+
+    /**
+     * Build the per-carrier quality metric entry included in the encode() return value.
+     */
+    private function buildQualityMetric(string $carrierPath, ?float $psnr): array
+    {
+        return [
+            'carrier'        => basename($carrierPath),
+            'psnr'           => $psnr,
+            'threshold_40db' => $psnr !== null ? ($psnr >= 40.0) : null,
+        ];
+    }
 
     private function resolveFileType(string $path): string
     {

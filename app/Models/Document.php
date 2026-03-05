@@ -31,7 +31,7 @@ class Document extends Model
 
     protected $fillable = [
         'name', 'original_name', 'file_path', 'size', 'extension', 'folder_id', 'visibility', 'share', 'download', 'email',
-        'url', 'contact', 'owner_id', 'date', 'emojies', 'position',
+        'url', 'owner_id', 'document_date', 'emojis', 'position',
         // AES-256-GCM encryption metadata
         'is_encrypted', 'enc_iv', 'enc_auth_tag', 'enc_dek_salt', 'enc_dek_iterations', 'enc_hash_sha256',
     ];
@@ -79,7 +79,7 @@ class Document extends Model
 
     public function tags()
     {
-        return $this->belongsToMany(Tag::class);
+        return $this->morphToMany(Tag::class, 'taggable');
     }
 
     public function comments()

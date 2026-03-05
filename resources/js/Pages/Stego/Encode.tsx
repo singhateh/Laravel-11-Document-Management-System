@@ -1,5 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, router, useForm } from '@inertiajs/react';
+import { Head, useForm } from '@inertiajs/react';
 import { PageProps } from '@/types';
 import { FormEvent, useRef, useState } from 'react';
 
@@ -15,7 +15,7 @@ interface EncodeProps extends PageProps {
     errors?: Record<string, string>;
 }
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2;
 
 export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
     const [step, setStep] = useState<Step>(1);
@@ -25,11 +25,9 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
 
     const { data, setData, post, processing, reset } = useForm<{
         document_id: string;
-        master_key: string;
         carriers: File[];
     }>({
         document_id: '',
-        master_key: '',
         carriers: [],
     });
 
@@ -42,7 +40,7 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
     const addFiles = (files: FileList | null) => {
         if (!files) return;
         const valid = Array.from(files).filter((f) =>
-            /\.(png|bmp)$/i.test(f.name)
+            /\.(png|bmp|jpe?g)$/i.test(f.name)
         );
         const updated = [...carriers, ...valid];
         setCarriers(updated);
@@ -57,24 +55,18 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
 
     const handleSubmit = (e: FormEvent) => {
         e.preventDefault();
-        const fd = new FormData();
-        fd.append('document_id', data.document_id);
-        fd.append('master_key', data.master_key);
-        carriers.forEach((f) => fd.append('carriers[]', f));
-
-        router.post(route('stego.encode'), fd as any, {
-            onError: () => setStep(3),
+        post(route('stego.encode'), {
+            preserveState: true,
+            onError: () => setStep(2),
         });
     };
 
     const canGoNext1 = !!data.document_id;
-    const canGoNext2 = carriers.length > 0;
-    const canSubmit = canGoNext1 && canGoNext2 && data.master_key.length >= 8;
+    const canSubmit  = canGoNext1 && carriers.length > 0;
 
     const steps: { label: string; icon: string }[] = [
         { label: 'Select Document', icon: '📄' },
         { label: 'Upload Carriers', icon: '🖼️' },
-        { label: 'Set Master Key', icon: '🔑' },
     ];
 
     return (
@@ -89,6 +81,22 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
 
             <div className="py-8">
                 <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+
+                    {/* Session Master Key banner */}
+                    <div className="mb-6 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                        <span className="text-lg">🔑</span>
+                        <p>
+                            <strong>Session Master Key active.</strong> Your encryption key was derived
+                            from your password at login and is held server-side only. No passphrase
+                            entry is needed here.
+                        </p>
+                    </div>
+
+                    {errors.session && (
+                        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            ⚠️ {errors.session}
+                        </div>
+                    )}
 
                     {/* Stepper */}
                     <div className="mb-8 flex items-center justify-between">
@@ -120,7 +128,7 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                             {s.label}
                                         </span>
                                     </div>
-                                    {i < steps.length - 1 && (
+                                    {i < 1 && (
                                         <div
                                             className={`mx-2 flex-1 border-t-2 transition-colors ${
                                                 step > num ? 'border-green-400' : 'border-gray-200'
@@ -189,11 +197,28 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                         🖼️ Upload carrier images
                                     </h3>
                                     <p className="mb-4 text-sm text-gray-500">
-                                        PNG or BMP only. Multiple files allowed — data is distributed across all carriers.
+                                        PNG, BMP or JPEG only. Multiple files allowed — data is distributed across
+                                        all carriers. Each carrier must achieve PSNR ≥ 40 dB after embedding.
                                     </p>
                                     {errors.carriers && (
                                         <p className="mb-3 text-sm text-red-600">{errors.carriers}</p>
                                     )}
+                                    {errors.encode && (
+                                        <p className="mb-3 text-sm text-red-600">{errors.encode}</p>
+                                    )}
+                                    {/* Encoding summary */}
+                                    <div className="mb-4 rounded-lg bg-gray-50 p-4 text-sm">
+                                        <p className="font-medium text-gray-700 mb-1">Encoding summary</p>
+                                        <p className="text-gray-500">
+                                            Document:{' '}
+                                            <span className="font-medium text-gray-700">
+                                                {documents.find((d) => String(d.id) === data.document_id)?.name ?? '—'}
+                                            </span>
+                                        </p>
+                                        <p className="text-gray-500">
+                                            Carriers: <span className="font-medium text-gray-700">{carriers.length} image(s) selected</span>
+                                        </p>
+                                    </div>
                                     {/* Drop zone */}
                                     <div
                                         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -208,13 +233,13 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                     >
                                         <div className="text-4xl mb-2">🖼️</div>
                                         <p className="text-sm text-gray-600">
-                                            Drag & drop PNG/BMP files here, or{' '}
+                                            Drag & drop PNG/BMP/JPEG files here, or{' '}
                                             <span className="text-indigo-600 underline">click to browse</span>
                                         </p>
                                         <input
                                             ref={fileInputRef}
                                             type="file"
-                                            accept=".png,.bmp"
+                                            accept=".png,.bmp,.jpg,.jpeg"
                                             multiple
                                             className="hidden"
                                             onChange={(e) => addFiles(e.target.files)}
@@ -246,52 +271,6 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                 </div>
                             )}
 
-                            {/* Step 3 */}
-                            {step === 3 && (
-                                <div>
-                                    <h3 className="mb-1 text-lg font-semibold text-gray-800">
-                                        🔑 Set your master key
-                                    </h3>
-                                    <p className="mb-4 text-sm text-gray-500">
-                                        This key is used to encrypt your document before embedding.
-                                        You will need it to decode — <strong>it is never stored</strong>.
-                                    </p>
-
-                                    {/* Summary */}
-                                    <div className="mb-5 rounded-lg bg-gray-50 p-4 text-sm">
-                                        <p className="font-medium text-gray-700 mb-1">Encoding summary</p>
-                                        <p className="text-gray-500">
-                                            Document:{' '}
-                                            <span className="font-medium text-gray-700">
-                                                {documents.find((d) => String(d.id) === data.document_id)?.name ?? '—'}
-                                            </span>
-                                        </p>
-                                        <p className="text-gray-500">
-                                            Carriers: <span className="font-medium text-gray-700">{carriers.length} image(s)</span>
-                                        </p>
-                                    </div>
-
-                                    {errors.master_key && (
-                                        <p className="mb-2 text-sm text-red-600">{errors.master_key}</p>
-                                    )}
-
-                                    <label className="block">
-                                        <span className="text-sm font-medium text-gray-700">Master Key</span>
-                                        <input
-                                            type="password"
-                                            value={data.master_key}
-                                            onChange={(e) => setData('master_key', e.target.value)}
-                                            placeholder="Min 8 characters"
-                                            className="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                                            autoComplete="new-password"
-                                        />
-                                    </label>
-                                    <p className="mt-1 text-xs text-gray-400">
-                                        Use a strong, unique passphrase. Store it somewhere safe.
-                                    </p>
-                                </div>
-                            )}
-
                             {/* Navigation buttons */}
                             <div className="mt-6 flex justify-between">
                                 <button
@@ -303,11 +282,11 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                     ← Back
                                 </button>
 
-                                {step < 3 ? (
+                                {step < 2 ? (
                                     <button
                                         type="button"
                                         onClick={() => setStep((s) => (s + 1) as Step)}
-                                        disabled={(step === 1 && !canGoNext1) || (step === 2 && !canGoNext2)}
+                                        disabled={step === 1 && !canGoNext1}
                                         className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
                                     >
                                         Next →

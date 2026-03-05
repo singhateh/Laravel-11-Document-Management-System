@@ -65,18 +65,15 @@ class DocumentController extends Controller
 
     public function getFiles($folder)
     {
-        $tags = request()->tags ?? [];
-
-        $documents = $this->documentService->getFolderFiles($folder,  $tags)['documents'];
-        $folderInfo =  $this->documentService->getFolderFiles($folder,  $tags)['folderInfo'];
-        $folderData =  $this->documentService->getFolderFiles($folder,  $tags)['folderData'];
+        $tags   = request()->tags ?? [];
+        $result = $this->documentService->getFolderFiles($folder, $tags);
 
         // Return JSON data for React/Inertia frontend
         return response()->json([
-            'documents' => $documents,
-            'folderInfo' => $folderInfo,
-            'folders' => $folderData,
-            'folder_id' => $folder,
+            'documents'  => $result['documents'],
+            'folderInfo' => $result['folderInfo'],
+            'folders'    => $result['folderData'],
+            'folder_id'  => $folder,
         ]);
     }
 
@@ -138,19 +135,7 @@ class DocumentController extends Controller
     {
         $folderId = $this->documentService->setUploadDocumentFiles($request);
 
-        // W3-T12: Audit log — record the upload action
-        AccessLog::create([
-            'user_id'     => Auth::id(),
-            'action'      => 'upload',
-            'resource'    => 'document',
-            'resource_id' => (string) $folderId,
-            'ip_address'  => $request->ip(),
-            'user_agent'  => $request->userAgent(),
-            'method'      => $request->method(),
-            'url'         => $request->fullUrl(),
-            'status_code' => 200,
-            'accessed_at' => now(),
-        ]);
+        AccessLog::log('upload', 'document', $folderId, $request);
 
         return response()->json(['message' => 'Files uploaded successfully', 'url' => route('getFiles', $folderId)], 200);
     }
@@ -197,19 +182,7 @@ class DocumentController extends Controller
             abort(500, 'Failed to retrieve document: ' . $e->getMessage());
         }
 
-        // W3-T12: Audit log — record the download action
-        AccessLog::create([
-            'user_id'     => $user->id,
-            'action'      => 'download',
-            'resource'    => 'document',
-            'resource_id' => $document->id,
-            'ip_address'  => request()->ip(),
-            'user_agent'  => request()->userAgent(),
-            'method'      => request()->method(),
-            'url'         => request()->fullUrl(),
-            'status_code' => 200,
-            'accessed_at' => now(),
-        ]);
+        AccessLog::log('download', 'document', $document->id, request());
 
         $filename = $document->original_name ?? $document->name;
         $mimeType = mime_content_type($absolutePath) ?: 'application/octet-stream';
@@ -220,6 +193,72 @@ class DocumentController extends Controller
             'Content-Length'            => strlen($content),
             'Cache-Control'             => 'no-store, no-cache, must-revalidate',
             'X-Encryption-Status'       => $document->is_encrypted ? 'AES-256-GCM' : 'plaintext',
+        ]);
+    }
+
+    /**
+     * Serve a document inline (for in-browser preview), decrypting if necessary.
+     * Uses Content-Disposition: inline so the browser renders it instead of downloading.
+     */
+    public function view(Document $document)
+    {
+        $user = Auth::user();
+
+        if ($document->visibility === 'private' && $document->owner_id !== $user->id) {
+            abort(403, 'You do not have permission to view this document.');
+        }
+
+        if (!empty($document->url)) {
+            return redirect($document->url);
+        }
+
+        $absolutePath = public_path($document->file_path);
+
+        if (!file_exists($absolutePath)) {
+            abort(404, 'The requested file could not be found on the server.');
+        }
+
+        try {
+            $content = $this->documentService->decryptDocumentContent($document);
+        } catch (\Exception $e) {
+            abort(500, 'Failed to retrieve document: ' . $e->getMessage());
+        }
+
+        // Derive MIME type from extension so it is correct even when the file
+        // on disk is encrypted (raw ciphertext bytes would fool mime_content_type).
+        $extensionMimeMap = [
+            'pdf'  => 'application/pdf',
+            'png'  => 'image/png',
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'gif'  => 'image/gif',
+            'svg'  => 'image/svg+xml',
+            'webp' => 'image/webp',
+            'bmp'  => 'image/bmp',
+            'mp4'  => 'video/mp4',
+            'webm' => 'video/webm',
+            'mov'  => 'video/quicktime',
+            'avi'  => 'video/x-msvideo',
+            'ogg'  => 'video/ogg',
+            'mp3'  => 'audio/mpeg',
+            'wav'  => 'audio/wav',
+            'm4a'  => 'audio/mp4',
+            'txt'  => 'text/plain',
+        ];
+
+        $ext      = strtolower($document->extension ?? pathinfo($document->file_path, PATHINFO_EXTENSION));
+        $mimeType = $extensionMimeMap[$ext]
+            ?? ($document->is_encrypted ? 'application/octet-stream' : (mime_content_type($absolutePath) ?: 'application/octet-stream'));
+
+        $filename = $document->original_name ?? $document->name;
+
+        AccessLog::log('view', 'document', $document->id, request());
+
+        return response($content, 200, [
+            'Content-Type'        => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . addslashes($filename) . '"',
+            'Content-Length'      => strlen($content),
+            'Cache-Control'       => 'no-store, no-cache, must-revalidate',
         ]);
     }
 

@@ -51,7 +51,7 @@ class NotificationController extends Controller
 
         $isCustomer = $authUser['roles'][0]['name'] === 'customer';
 
-        $query = Notification::where($isCustomer ? 'user_id' : 'created_by_id', $authUser['id'])
+        $query = Notification::where($isCustomer ? 'notifiable_id' : 'created_by_user_id', $authUser['id'])
             ->where('dismiss_status', 'UNDISMISSED')
             ->where('status', 'UNREAD')
             ->latest()
@@ -92,12 +92,12 @@ class NotificationController extends Controller
 
 
         $notification =  Notification::create([
-            'user_id' => $request->customer_id,
-            'user_type' => User::class,
-            'activity_type' => 'note_added',
-            'model_type' => User::class,
-            'model_id' => $request->customer_id,
-            'message' => $request->message,
+            'notifiable_id'   => $request->customer_id,
+            'notifiable_type' => User::class,
+            'activity_type'   => 'note_added',
+            'model_type'      => User::class,
+            'model_id'        => $request->customer_id,
+            'message'         => $request->message,
         ]);
 
         $data = $notification->customer?->recentNotifications;

@@ -52,8 +52,7 @@ class TagController extends Controller
 
         if ($request->tags) {
             foreach ($request->tags as $tagName) {
-                $tag = Tag::firstOrCreate(['name' => $tagName]);
-                $category->tags()->attach($tag);
+                $category->tags()->firstOrCreate(['name' => trim($tagName)]);
             }
         }
 

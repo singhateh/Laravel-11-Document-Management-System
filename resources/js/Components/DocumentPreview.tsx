@@ -1,4 +1,4 @@
-import { useState } from 'react';
+    import { useState } from 'react';
 import Modal from '@/Components/Modal';
 import SecondaryButton from '@/Components/SecondaryButton';
 
@@ -21,7 +21,16 @@ export default function DocumentPreview({ show, onClose, document }: DocumentPre
         if (document.file_path.startsWith('http')) {
             return document.file_path;
         }
-        return `/${document.file_path}`;
+        // Use the server-side view endpoint so encrypted files are decrypted
+        // before being sent to the browser (inline Content-Disposition).
+        return `/documents/${document.id}/view`;
+    };
+
+    const getDownloadUrl = () => {
+        if (document.file_path.startsWith('http')) {
+            return document.file_path;
+        }
+        return `/documents/${document.id}/download`;
     };
 
     const isImage = () => {
@@ -195,7 +204,7 @@ export default function DocumentPreview({ show, onClose, document }: DocumentPre
                     </div>
                     <div className="flex gap-2">
                         <a
-                            href={getFileUrl()}
+                            href={getDownloadUrl()}
                             download
                             className="rounded-md bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-100"
                         >

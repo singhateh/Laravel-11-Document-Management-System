@@ -43,6 +43,10 @@ class FolderController extends Controller
     {
         $folders = $this->folderService->setStoreFolder($request);
 
+        if ($request->header('X-Inertia')) {
+            return redirect()->route('folders.index');
+        }
+
         return response()->json(['html' => $folders]);
     }
 
@@ -104,6 +108,10 @@ class FolderController extends Controller
 
         foreach ($folders as $key => $folder) {
             $folder->deleteFolder();
+        }
+
+        if ($request->header('X-Inertia')) {
+            return redirect()->route('folders.index');
         }
 
         return response()->json(['html' =>  $this->getParentFolders(), 'message' => 'Folder and its related records deleted successfully'], 200);

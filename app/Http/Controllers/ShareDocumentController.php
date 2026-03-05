@@ -26,13 +26,12 @@ class ShareDocumentController extends Controller
     function sharedDocuments(Request $request)
     {
         $validated = $request->validate([
-            'shared_id' => 'required',
-            'token' => 'required',
-            'slug' => 'required',
-            'url' => 'required',
-            'name' => 'nullable',
-            'valid_until' => 'nullable',
-            'visibility' => 'nullable',
+            'shared_id'    => 'required',
+            'token'        => 'required',
+            'slug'         => 'required',
+            'name'         => 'nullable',
+            'valid_until'  => 'nullable',
+            'visibility'   => 'nullable',
         ]);
 
         ShareDocument::create($validated +

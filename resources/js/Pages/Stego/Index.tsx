@@ -7,7 +7,7 @@ interface StegoDoc {
     document: { id: number; name: string; extension: string } | null;
     segments_count: number;
     created_at: string;
-    hash_sha256: string;
+    stego_hash_sha256: string;
 }
 
 interface Paginator {
@@ -24,7 +24,7 @@ interface StegoIndexProps extends PageProps {
     stegoDocs: Paginator;
 }
 
-export default function Index({ auth, stegoDocs }: StegoIndexProps) {
+export default function Index({ auth, stegoDocs, flash }: StegoIndexProps) {
     const handleDelete = (id: number) => {
         if (!confirm('Delete this stego document? The carriers and segments will also be removed.')) return;
         router.delete(`/stego/${id}`, { preserveState: false });
@@ -51,12 +51,28 @@ export default function Index({ auth, stegoDocs }: StegoIndexProps) {
             <div className="py-8">
                 <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 
+                    {/* Flash messages */}
+                    {flash?.success && (
+                        <div className="mb-6 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                            <span className="text-lg">✅</span>
+                            <p>{flash.success}</p>
+                        </div>
+                    )}
+                    {flash?.error && (
+                        <div className="mb-6 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            <span className="text-lg">⚠️</span>
+                            <p>{flash.error}</p>
+                        </div>
+                    )}
+
                     {/* Info banner */}
                     <div className="mb-6 rounded-xl border border-indigo-100 bg-indigo-50 px-5 py-4">
                         <p className="text-sm text-indigo-800">
                             <strong>StegoLock</strong> hides your document inside carrier images using
-                            AES-256-GCM encryption + LSB steganography. Only you (with the master key)
-                            can decode it. Documents listed here are encrypted — the original remains untouched.
+                            AES-256-GCM encryption + LSB steganography. Your <strong>Master Key</strong> is
+                            derived from your login password using PBKDF2-SHA256 and held server-side only —
+                            it is never stored or transmitted. Documents listed here are encrypted; the
+                            originals remain untouched.
                         </p>
                     </div>
 
@@ -118,7 +134,7 @@ export default function Index({ auth, stegoDocs }: StegoIndexProps) {
                                                 {s.segments_count} carrier{s.segments_count !== 1 ? 's' : ''}
                                             </td>
                                             <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-gray-400">
-                                                {s.hash_sha256?.slice(0, 16)}…
+                                                {s.stego_hash_sha256?.slice(0, 16)}…
                                             </td>
                                             <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                                                 {new Date(s.created_at).toLocaleString()}

@@ -9,11 +9,12 @@ class Category extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['name'];
+    protected $fillable = ['name', 'slug', 'description'];
 
 
     public function tags()
     {
-        return $this->belongsToMany(Tag::class);
+        // category_tag pivot was dropped; tags belong to a category via tags.category_id FK.
+        return $this->hasMany(Tag::class);
     }
 }

@@ -5,6 +5,11 @@ use App\Http\Controllers\StegoWebController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
+use App\Models\Category;
+use App\Models\Document;
+use App\Models\Folder;
+use App\Models\StegoDocument;
+use App\Models\Tag;
 use App\Http\Controllers\TagController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\FolderController;
@@ -29,7 +34,34 @@ Route::get('/', function () {
 
 // Dashboard
 Route::get('/dashboard', function () {
-    return Inertia::render('Dashboard');
+    $userId = Auth::id();
+
+    $stats = [
+        'documents'  => Document::count(),
+        'folders'    => Folder::count(),
+        'categories' => Category::count(),
+        'tags'       => Tag::count(),
+        'stego_docs' => StegoDocument::where('user_id', $userId)->count(),
+    ];
+
+    $recentDocuments = Document::with('tags')
+        ->latest()
+        ->take(8)
+        ->get()
+        ->map(fn ($doc) => [
+            'id'         => $doc->id,
+            'name'       => $doc->name,
+            'extension'  => $doc->extension ?? pathinfo($doc->name, PATHINFO_EXTENSION),
+            'size'       => $doc->size ?? 0,
+            'created_at' => $doc->created_at,
+            'is_stegoed' => $doc->stegoDocument()->exists(),
+            'tags'       => $doc->tags->map(fn ($t) => ['id' => $t->id, 'name' => $t->name])->values(),
+        ]);
+
+    return Inertia::render('Dashboard', [
+        'stats'           => $stats,
+        'recentDocuments' => $recentDocuments,
+    ]);
 })->middleware(['auth'])->name('dashboard');
 
 // Profile routes
@@ -53,6 +85,7 @@ Route::middleware('auth')->group(function () {
     // Document Routes
     Route::get('/documents/{document}', [DocumentController::class, 'show'])->name('documents.show');
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->name('documents.download');
+    Route::get('/documents/{document}/view', [DocumentController::class, 'view'])->name('documents.view');
     Route::put('/documents/{document}', [DocumentController::class, 'update'])->name('documents.update');
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
     Route::post('/update-visibility', [DocumentController::class, 'updateVisibility'])->name('update.visibility');
@@ -110,11 +143,6 @@ Route::middleware('auth')->group(function () {
         Route::post('/decode', [StegoWebController::class, 'decode'])->name('decode');
         Route::get('/tokens',  [StegoWebController::class, 'tokens'])->name('tokens');        Route::delete('/{id}', [StegoWebController::class, 'destroy'])->name('destroy');    });
 
-    // Standalone StegoLock React SPA shell
-    Route::get('/stego-app/{any?}', fn () => view('stegolock'))
-        ->where('any', '.*')
-        ->name('stego.spa');
-
     // Projects and Contacts placeholder routes
     Route::get('/projects', function () {
         return Inertia::render('Projects/Index');
@@ -124,6 +152,11 @@ Route::middleware('auth')->group(function () {
         return Inertia::render('Contacts/Index');
     })->name('contacts.index');
 });
+
+// Standalone StegoLock React SPA shell — public (SPA handles its own auth internally)
+Route::get('/stego-app/{any?}', fn () => view('stegolock'))
+    ->where('any', '.*')
+    ->name('stego.spa');
 
 // Share Documents Route (public)
 Route::get('/{slug?}/share/{id?}/{token?}', [ShareDocumentController::class, 'getSharedDocuments'])->name('getSharedDocuments');

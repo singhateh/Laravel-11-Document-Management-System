@@ -14,7 +14,7 @@ class ShareDocument extends Model
 
     protected $fillable = [
         'shared_id', 'name', 'token',
-        'url', 'slug', 'valid_until', 'visibility',
+        'slug', 'valid_until', 'visibility',
         'share_id', 'share_type', 'user_type', 'user_id'
     ];
 

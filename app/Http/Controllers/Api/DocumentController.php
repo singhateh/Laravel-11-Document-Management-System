@@ -28,6 +28,21 @@ class DocumentController extends Controller
     public function __construct(private readonly DocumentService $documentService) {}
 
     // -------------------------------------------------------------------------
+    // W3-T09: GET /api/documents — Lightweight paginated document list
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return a lightweight paginated list of documents for the SPA Encode dropdown.
+     *
+     * @return JsonResponse
+     */
+    public function index(): JsonResponse
+    {
+        $docs = Document::select('id', 'name', 'extension', 'size')->latest()->paginate(50);
+        return response()->json($docs);
+    }
+
+    // -------------------------------------------------------------------------
     // W3-T01: POST /api/documents — Upload document(s)
     // -------------------------------------------------------------------------
 
@@ -88,7 +103,7 @@ class DocumentController extends Controller
                     'folder_id'     => $folderId,
                     'visibility'    => $visibility,
                     'owner_id'      => $user->id,
-                    'date'          => now(),
+                    'document_date' => now(),
                 ]);
 
                 // W3-T02: encrypt at rest if DOCUMENT_MASTER_KEY is configured
@@ -106,19 +121,7 @@ class DocumentController extends Controller
             return response()->json(['message' => 'Upload failed: ' . $e->getMessage()], 500);
         }
 
-        // W3-T12: Audit log — record the upload action
-        AccessLog::create([
-            'user_id'     => $user->id,
-            'action'      => 'upload',
-            'resource'    => 'document',
-            'resource_id' => implode(',', array_column($created, 'id')),
-            'ip_address'  => $request->ip(),
-            'user_agent'  => $request->userAgent(),
-            'method'      => $request->method(),
-            'url'         => $request->fullUrl(),
-            'status_code' => 201,
-            'accessed_at' => now(),
-        ]);
+        AccessLog::log('upload', 'document', implode(',', array_column($created, 'id')), $request, 201);
 
         return response()->json([
             'message'   => count($created) . ' document(s) uploaded successfully.',
@@ -152,19 +155,7 @@ class DocumentController extends Controller
             return response()->json(['message' => 'Forbidden: this document is private.'], 403);
         }
 
-        // W3-T12: Audit log — record the metadata view
-        AccessLog::create([
-            'user_id'     => $user->id,
-            'action'      => 'view',
-            'resource'    => 'document',
-            'resource_id' => $doc->id,
-            'ip_address'  => $request->ip(),
-            'user_agent'  => $request->userAgent(),
-            'method'      => $request->method(),
-            'url'         => $request->fullUrl(),
-            'status_code' => 200,
-            'accessed_at' => now(),
-        ]);
+        AccessLog::log('view', 'document', $doc->id, $request);
 
         return response()->json([
             'document' => $this->documentResource($doc),
