@@ -115,6 +115,65 @@ class SegmentationService
     }
 
     /**
+     * Split a base64-encoded ciphertext into fixed 2 MB binary chunks, assigning
+     * one chunk per carrier ("one whole image per chunk" strategy).
+     *
+     * Each chunk is validated against its carrier's byte capacity before the
+     * array is returned so the caller gets a clean all-or-nothing result.
+     *
+     * @param  string $base64Ciphertext  Base64-encoded ciphertext from CryptoService::encrypt()
+     * @param  int[]  $carrierCapacities Byte capacity of each available carrier (index-aligned)
+     * @return array<int, array{ index: int, chunk: string, hash: string }>
+     *         Each element: segment_index (0-based), raw binary chunk, SHA-256 of chunk
+     * @throws \RuntimeException If more chunks than carriers, or a carrier is too small
+     * @throws Exception         If the base64 ciphertext is malformed
+     */
+    public function split(string $base64Ciphertext, array $carrierCapacities): array
+    {
+        $rawData = base64_decode($base64Ciphertext, true);
+
+        if ($rawData === false) {
+            throw new Exception('Invalid base64 ciphertext provided to split().');
+        }
+
+        $chunkSize = 2 * 1024 * 1024; // 2 MB per chunk
+        $chunks    = str_split($rawData, $chunkSize);
+
+        if (count($chunks) > count($carrierCapacities)) {
+            $need  = count($chunks);
+            $have  = count($carrierCapacities);
+            $short = $need - $have;
+            throw new \RuntimeException(
+                "Document requires {$need} carrier image(s) but only {$have} were uploaded. " .
+                "Please add {$short} more carrier image(s)."
+            );
+        }
+
+        $segments = [];
+
+        foreach ($chunks as $index => $chunk) {
+            $capacity = $carrierCapacities[$index];
+
+            if (strlen($chunk) > $capacity) {
+                $minDim = (int) ceil(sqrt((strlen($chunk) * 8) / 3));
+                throw new \RuntimeException(
+                    'Carrier image ' . ($index + 1) . ' is too small. ' .
+                    'Needs ' . strlen($chunk) . ' bytes but its capacity is only ' . $capacity . ' bytes. ' .
+                    "Use an image of at least {$minDim}\u{00D7}{$minDim} pixels."
+                );
+            }
+
+            $segments[] = [
+                'index' => $index,
+                'chunk' => $chunk,
+                'hash'  => hash('sha256', $chunk),
+            ];
+        }
+
+        return $segments;
+    }
+
+    /**
      * Calculate the optimal number of segments given available carrier files
      * and the size of the data to hide.
      *

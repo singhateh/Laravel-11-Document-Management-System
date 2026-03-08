@@ -82,8 +82,18 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         // Encode a document (multipart form-data) — returns JSON { stego_document_id, quality_metrics }
         Route::post('/encode', [StegoDocumentController::class, 'encode'])->name('encode');
 
-        // Decode — extracts and decrypts, returns file download
+        // Decode — extracts and decrypts, returns file download (owner OR granted viewer)
         Route::post('/decode', [StegoDocumentController::class, 'decode'])->name('decode');
+
+        // Grant viewer-decode access to another user (owner only)
+        Route::post('/documents/{id}/grant',                      [StegoDocumentController::class, 'grant'])
+            ->name('documents.grant')
+            ->whereNumber('id');
+
+        // Revoke a viewer's access (owner only)
+        Route::delete('/documents/{id}/grant/{viewer_user_id}',   [StegoDocumentController::class, 'revokeGrant'])
+            ->name('documents.grant.revoke')
+            ->whereNumber(['id', 'viewer_user_id']);
 
     });
 

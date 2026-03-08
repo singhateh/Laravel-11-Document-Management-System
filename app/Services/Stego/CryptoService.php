@@ -129,11 +129,15 @@ class CryptoService
      */
     public function encrypt(string $plaintext, string $dek): array
     {
+        // Compress BEFORE encrypting: encrypted output is random noise and
+        // incompressible, so compression must come first to be effective.
+        $compressed = gzcompress($plaintext, 6);
+
         $iv  = $this->secureRandom(self::IV_LENGTH);
         $tag = '';
 
         $ciphertext = openssl_encrypt(
-            $plaintext,
+            $compressed,
             self::CIPHER,
             hex2bin($dek),
             OPENSSL_RAW_DATA,
@@ -147,10 +151,11 @@ class CryptoService
             throw new Exception('AES-256-GCM encryption failed: ' . openssl_error_string());
         }
 
+        // Base64-encode all output: ~33% overhead vs 100% overhead for bin2hex.
         return [
-            'ciphertext' => bin2hex($ciphertext),
-            'iv'         => bin2hex($iv),
-            'auth_tag'   => bin2hex($tag),
+            'ciphertext' => base64_encode($ciphertext),
+            'iv'         => base64_encode($iv),
+            'auth_tag'   => base64_encode($tag),
         ];
     }
 
@@ -170,20 +175,23 @@ class CryptoService
      */
     public function decrypt(string $ciphertext, string $dek, string $iv, string $authTag): string
     {
-        $plaintext = openssl_decrypt(
-            hex2bin($ciphertext),
+        // $ciphertext is raw binary reassembled from carrier chunks.
+        // $iv and $authTag are base64-encoded strings stored in stego_documents.
+        $compressed = openssl_decrypt(
+            $ciphertext,
             self::CIPHER,
             hex2bin($dek),
             OPENSSL_RAW_DATA,
-            hex2bin($iv),
-            hex2bin($authTag)
+            base64_decode($iv),
+            base64_decode($authTag)
         );
 
-        if ($plaintext === false) {
+        if ($compressed === false) {
             throw new Exception('AES-256-GCM decryption failed: authentication tag mismatch or corrupt data.');
         }
 
-        return $plaintext;
+        // Decompress AFTER decrypting to recover the original plaintext.
+        return gzuncompress($compressed);
     }
 
     // -------------------------------------------------------------------------

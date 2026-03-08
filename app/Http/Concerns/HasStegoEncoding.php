@@ -58,9 +58,17 @@ trait HasStegoEncoding
         $paths = [];
 
         foreach ($uploadedFiles as $file) {
-            $tmp = tempnam(sys_get_temp_dir(), 'carrier_');
-            $file->move(dirname($tmp), basename($tmp));
-            $paths[] = $tmp;
+            $tmpBase = tempnam(sys_get_temp_dir(), 'carrier_');
+            $ext     = strtolower($file->getClientOriginalExtension());
+            $dest    = $ext ? $tmpBase . '.' . $ext : $tmpBase;
+
+            if ($ext) {
+                // Remove the empty placeholder so the move target has the proper extension.
+                @unlink($tmpBase);
+            }
+
+            $file->move(dirname($dest), basename($dest));
+            $paths[] = $dest;
         }
 
         return $paths;
@@ -85,19 +93,24 @@ trait HasStegoEncoding
     // -------------------------------------------------------------------------
 
     /**
-     * Resolve the plaintext bytes for a Document from local storage.
+     * Resolve the plaintext bytes for a Document from the public directory.
+     *
+     * Documents are stored under public/ and resolved via public_path(),
+     * consistent with DocumentController::download() / view().
      *
      * @throws \RuntimeException if the physical file is missing on disk
      */
     protected function readDocumentPlaintext(Document $document): string
     {
-        if (!Storage::disk('local')->exists($document->file_path)) {
+        $absolutePath = public_path($document->file_path);
+
+        if (!file_exists($absolutePath)) {
             throw new \RuntimeException(
                 "Source document file not found on disk: {$document->name}"
             );
         }
 
-        return Storage::disk('local')->get($document->file_path);
+        return file_get_contents($absolutePath);
     }
 
     /**

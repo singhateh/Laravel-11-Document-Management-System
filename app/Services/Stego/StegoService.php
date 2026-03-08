@@ -156,10 +156,20 @@ class StegoService
     private function embedLSBPython(string $carrierPath, string $data, string $outputPath): string
     {
         $b64Payload = base64_encode($data);
-
-        $result = $this->runPythonScript('embed', [$carrierPath, $b64Payload, $outputPath]);
-
-        return $result['data']; // returns the output path
+        
+        // Write payload to temporary file to avoid command line length limits
+        $payloadFile = tempnam(sys_get_temp_dir(), 'stego_payload_');
+        file_put_contents($payloadFile, $b64Payload);
+        
+        try {
+            $result = $this->runPythonScript('embed', [$carrierPath, $payloadFile, $outputPath]);
+            return $result['data']; // returns the output path
+        } finally {
+            // Clean up temporary file
+            if (file_exists($payloadFile)) {
+                @unlink($payloadFile);
+            }
+        }
     }
 
     /**

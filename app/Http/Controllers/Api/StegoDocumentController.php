@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Concerns\HasStegoEncoding;
 use App\Models\Document;
 use App\Models\StegoDocument;
+use App\Models\StegoDocumentGrant;
+use App\Models\User;
 use App\Services\Stego\StegoDocumentService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -15,15 +18,18 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * StegoDocumentController (API)
  *
- * Handles CRUD + encode/decode operations for StegoDocument resources.
+ * Handles CRUD + encode/decode operations for StegoDocument resources,
+ * plus owner-only access-grant management (grant / revokeGrant).
  *
  * Routes (registered in routes/api.php):
- *   GET    /api/stego/documents        — paginated list for authenticated user
- *   GET    /api/stego/documents/{id}   — single doc with segments
- *   POST   /api/stego/encode           — encrypt + embed document into carriers
- *   POST   /api/stego/decode           — extract + decrypt → file download
- *   DELETE /api/stego/{id}             — delete (ownership enforced)
- *   GET    /api/stego                  — SPA alias → same as index()
+ *   GET    /api/stego/documents                              — paginated list for authenticated user
+ *   GET    /api/stego/documents/{id}                        — single doc with segments
+ *   POST   /api/stego/encode                                — encrypt + embed document into carriers
+ *   POST   /api/stego/decode                                — extract + decrypt → file download (owner OR granted viewer)
+ *   DELETE /api/stego/{id}                                  — delete (ownership enforced)
+ *   GET    /api/stego                                       — SPA alias → same as index()
+ *   POST   /api/stego/documents/{id}/grant                  — grant viewer access (owner only)
+ *   DELETE /api/stego/documents/{id}/grant/{viewer_user_id} — revoke viewer access (owner only)
  */
 class StegoDocumentController extends Controller
 {
@@ -169,6 +175,9 @@ class StegoDocumentController extends Controller
      * Extract + decrypt a previously encoded StegoDocument and return the
      * original file as a download.
      *
+     * Authorization: the authenticated user must be either the **owner**
+     * (stego_documents.user_id) OR appear as a viewer in stego_document_grants.
+     *
      * Reads the Master Key from the server-side session (populated at login via MKD).
      *
      * @param  Request $request  { stego_document_id: int }
@@ -190,17 +199,24 @@ class StegoDocumentController extends Controller
 
         $user = Auth::user();
 
-        // Ownership check before decoding.
-        $stegoDoc = StegoDocument::where('user_id', $user->id)
+        // Authorization: owner OR granted viewer.
+        $stegoDoc = StegoDocument::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('viewerGrants', fn ($g) =>
+                      $g->where('viewer_user_id', $user->id)
+                  );
+            })
             ->where('id', $request->stego_document_id)
             ->with('document')
             ->firstOrFail();
 
+        // The decode pipeline always works with the owner's user_id so that the
+        // DEK can be re-derived correctly. The owner's id is stored on the record.
         try {
             $plaintext = $this->stegoService->decode(
                 $request->stego_document_id,
                 $masterKey,
-                $user->id
+                $stegoDoc->user_id   // always the owner's id, not the viewer's
             );
         } catch (\Exception $e) {
             return response()->json(['message' => 'Decoding failed: ' . $e->getMessage()], 422);
@@ -213,5 +229,91 @@ class StegoDocumentController extends Controller
             $filename,
             ['Content-Type' => 'application/octet-stream']
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/stego/documents/{id}/grant
+    // -------------------------------------------------------------------------
+
+    /**
+     * Grant viewer-decode access to another user for a stego document.
+     *
+     * Only the document's owner may call this endpoint.
+     * The same viewer cannot be granted twice (unique constraint → 409).
+     *
+     * @param  Request $request  { viewer_user_id: int }
+     * @param  int     $id       StegoDocument id
+     * @return JsonResponse      201 { message, grant } | 404 | 409 | 422
+     */
+    public function grant(Request $request, int $id): JsonResponse
+    {
+        // Ownership check — 404 if not the owner.
+        $stegoDoc = Auth::user()->stegoDocuments()->findOrFail($id);
+
+        $request->validate([
+            'viewer_user_id' => ['required', 'integer', 'exists:users,id'],
+        ]);
+
+        $ownerId   = Auth::id();
+        $viewerId  = (int) $request->viewer_user_id;
+
+        // Owner cannot grant themselves.
+        if ($viewerId === $ownerId) {
+            return response()->json([
+                'message' => 'You cannot grant access to yourself.',
+            ], 422);
+        }
+
+        // Attempt to insert; catch duplicate-grant violation.
+        try {
+            $grant = StegoDocumentGrant::create([
+                'stego_document_id' => $stegoDoc->id,
+                'viewer_user_id'    => $viewerId,
+                'granted_by'        => $ownerId,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            return response()->json([
+                'message' => 'Viewer already has access to this document.',
+            ], 409);
+        }
+
+        return response()->json([
+            'message' => 'Access granted.',
+            'grant'   => [
+                'id'                 => $grant->id,
+                'stego_document_id'  => $grant->stego_document_id,
+                'viewer_user_id'     => $grant->viewer_user_id,
+                'granted_by'         => $grant->granted_by,
+                'created_at'         => $grant->created_at?->toISOString(),
+            ],
+        ], 201);
+    }
+
+    // -------------------------------------------------------------------------
+    // DELETE /api/stego/documents/{id}/grant/{viewer_user_id}
+    // -------------------------------------------------------------------------
+
+    /**
+     * Revoke a viewer's decode access for a stego document.
+     *
+     * Only the document's owner may call this endpoint.
+     *
+     * @param  Request $request
+     * @param  int     $id             StegoDocument id
+     * @param  int     $viewerUserId   User id whose grant should be removed
+     * @return JsonResponse            200 | 404
+     */
+    public function revokeGrant(Request $request, int $id, int $viewerUserId): JsonResponse
+    {
+        // Ownership check — 404 if not the owner.
+        $stegoDoc = Auth::user()->stegoDocuments()->findOrFail($id);
+
+        $grant = StegoDocumentGrant::where('stego_document_id', $stegoDoc->id)
+            ->where('viewer_user_id', $viewerUserId)
+            ->firstOrFail();
+
+        $grant->delete();
+
+        return response()->json(['message' => 'Grant revoked.']);
     }
 }

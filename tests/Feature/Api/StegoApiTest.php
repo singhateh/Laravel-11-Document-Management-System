@@ -222,4 +222,147 @@ class StegoApiTest extends TestCase
             ->getJson("/api/stego/documents/{$stegoDoc->id}")
             ->assertStatus(404);
     }
+
+    // -------------------------------------------------------------------------
+    // Grant — authentication guard
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function grant_requires_authentication(): void
+    {
+        $this->postJson('/api/stego/documents/1/grant')->assertStatus(401);
+    }
+
+    // -------------------------------------------------------------------------
+    // Grant — owner creates a grant
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function grant_returns_201_for_owner(): void
+    {
+        $stegoDoc = StegoDocument::factory()->create(['user_id' => $this->user->id]);
+        $viewer   = User::factory()->create(['username' => 'viewer1', 'role' => 'user']);
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson("/api/stego/documents/{$stegoDoc->id}/grant", [
+                'viewer_user_id' => $viewer->id,
+            ])
+            ->assertStatus(201)
+            ->assertJsonStructure([
+                'message',
+                'grant' => ['id', 'stego_document_id', 'viewer_user_id', 'granted_by', 'created_at'],
+            ])
+            ->assertJsonPath('grant.viewer_user_id', $viewer->id)
+            ->assertJsonPath('grant.granted_by', $this->user->id);
+    }
+
+    // -------------------------------------------------------------------------
+    // Grant — non-owner gets 404
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function grant_returns_404_for_non_owner(): void
+    {
+        $owner    = User::factory()->create(['username' => 'owner1', 'role' => 'user']);
+        $stegoDoc = StegoDocument::factory()->create(['user_id' => $owner->id]);
+        $viewer   = User::factory()->create(['username' => 'viewer2', 'role' => 'user']);
+
+        // Authenticated as a different user (not the owner).
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson("/api/stego/documents/{$stegoDoc->id}/grant", [
+                'viewer_user_id' => $viewer->id,
+            ])
+            ->assertStatus(404);
+    }
+
+    // -------------------------------------------------------------------------
+    // Grant — duplicate grant returns 409
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function grant_returns_409_on_duplicate(): void
+    {
+        $stegoDoc = StegoDocument::factory()->create(['user_id' => $this->user->id]);
+        $viewer   = User::factory()->create(['username' => 'viewer3', 'role' => 'user']);
+
+        // First grant.
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson("/api/stego/documents/{$stegoDoc->id}/grant", [
+                'viewer_user_id' => $viewer->id,
+            ])
+            ->assertStatus(201);
+
+        // Duplicate grant.
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson("/api/stego/documents/{$stegoDoc->id}/grant", [
+                'viewer_user_id' => $viewer->id,
+            ])
+            ->assertStatus(409)
+            ->assertJsonFragment(['message' => 'Viewer already has access to this document.']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Grant — revoke
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function revoke_grant_returns_200_for_owner(): void
+    {
+        $stegoDoc = StegoDocument::factory()->create(['user_id' => $this->user->id]);
+        $viewer   = User::factory()->create(['username' => 'viewer4', 'role' => 'user']);
+
+        // Create the grant first.
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson("/api/stego/documents/{$stegoDoc->id}/grant", [
+                'viewer_user_id' => $viewer->id,
+            ])
+            ->assertStatus(201);
+
+        // Revoke it.
+        $this->actingAs($this->user, 'sanctum')
+            ->deleteJson("/api/stego/documents/{$stegoDoc->id}/grant/{$viewer->id}")
+            ->assertOk()
+            ->assertJsonFragment(['message' => 'Grant revoked.']);
+
+        // Confirm the row is gone.
+        $this->assertDatabaseMissing('stego_document_grants', [
+            'stego_document_id' => $stegoDoc->id,
+            'viewer_user_id'    => $viewer->id,
+        ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // Decode — granted viewer can reach the decode pipeline
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function decode_succeeds_for_granted_viewer(): void
+    {
+        $owner    = User::factory()->create(['username' => 'grantowner', 'role' => 'user', 'mkd_salt' => str_repeat('cd', 16)]);
+        $stegoDoc = StegoDocument::factory()
+            ->has(\App\Models\Document::factory()->state(['owner_id' => $owner->id]), 'document')
+            ->create(['user_id' => $owner->id]);
+
+        // Grant access to $this->user (the viewer).
+        \App\Models\StegoDocumentGrant::create([
+            'stego_document_id' => $stegoDoc->id,
+            'viewer_user_id'    => $this->user->id,
+            'granted_by'        => $owner->id,
+        ]);
+
+        $mock = Mockery::mock(StegoDocumentService::class);
+        $mock->shouldReceive('decode')
+            ->once()
+            ->andReturn('recovered plaintext bytes');
+
+        $this->app->instance(StegoDocumentService::class, $mock);
+
+        // $this->user is a viewer (not the owner) — decode should be authorized.
+        $this->actingAs($this->user, 'sanctum')
+            ->withSession(['stego_mkd' => str_repeat('a', 64)])
+            ->postJson('/api/stego/decode', ['stego_document_id' => $stegoDoc->id])
+            ->assertOk()
+            ->assertHeader('Content-Disposition');
+    }
 }
+

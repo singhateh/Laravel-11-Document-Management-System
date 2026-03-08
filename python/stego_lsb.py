@@ -4,7 +4,7 @@ StegoLock — Python LSB Steganography Driver
 Called by Laravel's StegoService via symfony/process.
 
 Usage:
-  python stego_lsb.py embed    <carrier_path> <b64_payload> <output_path>
+  python stego_lsb.py embed    <carrier_path> <payload_file> <output_path>
   python stego_lsb.py extract  <stego_path>
   python stego_lsb.py capacity <image_path>
 
@@ -37,13 +37,16 @@ def _err(message: str) -> None:
 # EMBED
 # ---------------------------------------------------------------------------
 
-def cmd_embed(carrier_path: str, b64_payload: str, output_path: str) -> None:
+def cmd_embed(carrier_path: str, payload_path: str, output_path: str) -> None:
     """
     Hide base64-encoded binary data into a carrier image using LSB.
 
     The stegano library only accepts string payloads, so the binary
     encrypted chunk from PHP is pre-encoded as base64 before being passed
     to this script and post-decoded on extraction.
+    
+    Payload is read from a temporary file instead of command-line argument
+    to avoid Windows command line length limits.
     """
     try:
         from stegano import lsb
@@ -51,6 +54,14 @@ def cmd_embed(carrier_path: str, b64_payload: str, output_path: str) -> None:
         if not os.path.isfile(carrier_path):
             _err(f"Carrier file not found: {carrier_path}")
             return
+
+        if not os.path.isfile(payload_path):
+            _err(f"Payload file not found: {payload_path}")
+            return
+
+        # Read payload from file
+        with open(payload_path, 'r', encoding='utf-8') as f:
+            b64_payload = f.read().strip()
 
         # Validate base64 input
         try:
@@ -208,7 +219,7 @@ if __name__ == "__main__":
 
     if command == "embed":
         if len(sys.argv) != 5:
-            _err("Usage: stego_lsb.py embed <carrier_path> <b64_payload> <output_path>")
+            _err("Usage: stego_lsb.py embed <carrier_path> <payload_file> <output_path>")
             sys.exit(1)
         cmd_embed(sys.argv[2], sys.argv[3], sys.argv[4])
 

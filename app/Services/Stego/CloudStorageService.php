@@ -10,24 +10,18 @@ use Illuminate\Http\UploadedFile;
  * CloudStorageService
  *
  * Wraps Laravel's Storage facade to provide a clean interface for uploading,
- * downloading, and deleting StegoLock files on the configured S3 disk.
- *
- * The S3 disk is already defined in config/filesystems.php. Credentials are
- * read from the .env file (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, etc.).
- *
- * Replaces the gRPC cloud-storage-service microservice described in the .md guide.
- * Requires: league/flysystem-aws-s3-v3 (install via: composer require league/flysystem-aws-s3-v3)
+ * downloading, and deleting StegoLock files on the local disk (storage/app/).
  */
 class CloudStorageService
 {
     // ------------------------------------------------------------------
-    // S3 key prefix structure:
+    // Local path prefix structure (mirrors the old S3 key naming):
     //   stego/carriers/{userId}/{filename}
     //   stego/documents/{userId}/{stegoDocumentId}
     //   stego/segments/{stegoDocumentId}/{segmentIndex}
     // ------------------------------------------------------------------
 
-    private const DISK = 's3';
+    private const DISK = 'local';
 
     // -------------------------------------------------------------------------
     // Upload
@@ -50,14 +44,14 @@ class CloudStorageService
 
         $stream = fopen($localPath, 'r');
 
-        $ok = Storage::disk(self::DISK)->put($s3Key, $stream, $visibility);
+        $ok = Storage::disk(self::DISK)->put($s3Key, $stream);
 
         if (is_resource($stream)) {
             fclose($stream);
         }
 
         if (!$ok) {
-            throw new Exception("S3 upload failed for key: {$s3Key}");
+            throw new Exception("Local storage write failed for key: {$s3Key}");
         }
 
         return [
@@ -77,10 +71,10 @@ class CloudStorageService
      */
     public function uploadContent(string $content, string $s3Key, string $visibility = 'private'): array
     {
-        $ok = Storage::disk(self::DISK)->put($s3Key, $content, $visibility);
+        $ok = Storage::disk(self::DISK)->put($s3Key, $content);
 
         if (!$ok) {
-            throw new Exception("S3 content upload failed for key: {$s3Key}");
+            throw new Exception("Local storage content write failed for key: {$s3Key}");
         }
 
         return [
@@ -187,19 +181,16 @@ class CloudStorageService
      */
     public function url(string $s3Key): string
     {
-        return Storage::disk(self::DISK)->url($s3Key);
+        return Storage::disk(self::DISK)->path($s3Key);
     }
 
     /**
-     * Generate a pre-signed temporary URL for a private S3 object.
-     *
-     * @param  string             $s3Key
-     * @param  \DateTimeInterface $expiry When the URL should expire
-     * @return string
+     * Temporary URLs are not applicable to local storage — returns the same
+     * absolute local path as url().
      */
     public function temporaryUrl(string $s3Key, \DateTimeInterface $expiry): string
     {
-        return Storage::disk(self::DISK)->temporaryUrl($s3Key, $expiry);
+        return $this->url($s3Key);
     }
 
     /**
@@ -239,7 +230,7 @@ class CloudStorageService
     private function assertKeyExists(string $s3Key): void
     {
         if (!Storage::disk(self::DISK)->exists($s3Key)) {
-            throw new Exception("S3 object not found: {$s3Key}");
+            throw new Exception("Local storage file not found: {$s3Key}");
         }
     }
 }

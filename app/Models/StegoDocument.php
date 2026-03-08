@@ -19,7 +19,12 @@ class StegoDocument extends Model
         'stego_hash_sha256',
         'stego_dek_salt',
         'stego_dek_iter',
+        'compressed',
         's3_key',
+    ];
+
+    protected $casts = [
+        'compressed' => 'boolean',
     ];
 
     // -------------------------------------------------------------------------
@@ -54,5 +59,10 @@ class StegoDocument extends Model
     public function segments()
     {
         return $this->hasMany(StegoSegment::class)->orderBy('segment_index');
+    }
+
+    public function viewerGrants()
+    {
+        return $this->hasMany(StegoDocumentGrant::class);
     }
 }

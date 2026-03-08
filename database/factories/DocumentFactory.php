@@ -21,7 +21,7 @@ class DocumentFactory extends Factory
             'folder_id'     => null,
             'visibility'    => true,
             'owner_id'      => User::factory(),
-            'date'          => now(),
+            'document_date' => now(),
             'is_encrypted'  => false,
         ];
     }

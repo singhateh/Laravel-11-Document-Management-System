@@ -159,4 +159,101 @@ class SegmentationServiceTest extends TestCase
 
         $this->svc->reassemble([]);
     }
+
+    // -------------------------------------------------------------------------
+    // split() — one whole carrier per 2 MB chunk
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function split_small_payload_produces_single_chunk(): void
+    {
+        $raw            = str_repeat('x', 1024);          // 1 KB — fits in one 2 MB chunk
+        $base64         = base64_encode($raw);
+        $capacities     = [2 * 1024 * 1024];              // one carrier, more than enough
+
+        $segments = $this->svc->split($base64, $capacities);
+
+        $this->assertCount(1, $segments);
+        $this->assertSame(0, $segments[0]['index']);
+        $this->assertSame($raw, $segments[0]['chunk']);
+    }
+
+    #[Test]
+    public function split_large_payload_produces_multiple_chunks(): void
+    {
+        $raw        = str_repeat('a', 5 * 1024 * 1024);   // 5 MB → 3 chunks of 2 MB
+        $base64     = base64_encode($raw);
+        $capacities = array_fill(0, 3, 2 * 1024 * 1024);
+
+        $segments = $this->svc->split($base64, $capacities);
+
+        $this->assertCount(3, $segments);
+    }
+
+    #[Test]
+    public function split_assigns_sequential_indices(): void
+    {
+        $raw        = str_repeat('b', 5 * 1024 * 1024);
+        $base64     = base64_encode($raw);
+        $capacities = array_fill(0, 3, 2 * 1024 * 1024);
+
+        $segments = $this->svc->split($base64, $capacities);
+        $indices  = array_column($segments, 'index');
+
+        $this->assertSame([0, 1, 2], $indices);
+    }
+
+    #[Test]
+    public function split_chunks_reassemble_to_original_raw_binary(): void
+    {
+        $original   = str_repeat('z', 4 * 1024 * 1024 + 123);   // just over 4 MB
+        $base64     = base64_encode($original);
+        $capacities = array_fill(0, 3, 2 * 1024 * 1024);
+
+        $segments    = $this->svc->split($base64, $capacities);
+        $reassembled = $this->svc->reassemble($segments);
+
+        $this->assertSame($original, $reassembled);
+    }
+
+    #[Test]
+    public function split_stores_correct_sha256_hash_per_chunk(): void
+    {
+        $raw        = str_repeat('c', 3 * 1024 * 1024);
+        $base64     = base64_encode($raw);
+        $capacities = array_fill(0, 2, 2 * 1024 * 1024);
+
+        $segments = $this->svc->split($base64, $capacities);
+
+        foreach ($segments as $seg) {
+            $this->assertSame(hash('sha256', $seg['chunk']), $seg['hash']);
+        }
+    }
+
+    #[Test]
+    public function split_throws_when_not_enough_carriers(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/carrier image/i');
+
+        $raw        = str_repeat('d', 5 * 1024 * 1024);   // needs 3 carriers
+        $base64     = base64_encode($raw);
+        $capacities = [2 * 1024 * 1024];                  // only 1 supplied
+
+        $this->svc->split($base64, $capacities);
+    }
+
+    #[Test]
+    public function split_throws_when_carrier_is_too_small_for_its_chunk(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/too small/i');
+
+        $raw        = str_repeat('e', 3 * 1024 * 1024);
+        $base64     = base64_encode($raw);
+        // Two carriers but the first is tiny and cannot hold a 2 MB chunk.
+        $capacities = [512, 2 * 1024 * 1024];
+
+        $this->svc->split($base64, $capacities);
+    }
 }

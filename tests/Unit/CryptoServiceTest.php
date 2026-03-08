@@ -107,8 +107,14 @@ class CryptoServiceTest extends TestCase
         $plaintext = 'Hello, StegoLock! This is a secret document.';
 
         $encrypted = $this->crypto->encrypt($plaintext, $dek['dek']);
+
+        // encrypt() returns base64-encoded ciphertext for safe storage.
+        // decrypt() receives raw binary (as reassembled from carrier extraction),
+        // so we must base64_decode first — matching what SegmentationService::split() does.
+        $rawCiphertext = base64_decode($encrypted['ciphertext']);
+
         $decrypted = $this->crypto->decrypt(
-            $encrypted['ciphertext'],
+            $rawCiphertext,
             $dek['dek'],
             $encrypted['iv'],
             $encrypted['auth_tag']
@@ -129,7 +135,13 @@ class CryptoServiceTest extends TestCase
         $dek2      = $this->crypto->deriveDEK($mkd2['masterKey'], 'doc-1');
         $encrypted = $this->crypto->encrypt('secret', $dek1['dek']);
 
-        $this->crypto->decrypt($encrypted['ciphertext'], $dek2['dek'], $encrypted['iv'], $encrypted['auth_tag']);
+        // Pass raw binary (as would come from carrier extraction) with the wrong DEK.
+        $this->crypto->decrypt(
+            base64_decode($encrypted['ciphertext']),
+            $dek2['dek'],
+            $encrypted['iv'],
+            $encrypted['auth_tag']
+        );
     }
 
     #[Test]
@@ -141,12 +153,12 @@ class CryptoServiceTest extends TestCase
         $dek       = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
         $encrypted = $this->crypto->encrypt('secret data', $dek['dek']);
 
-        // Flip first hex nibble to tamper with the ciphertext.
-        $tampered = $encrypted;
-        $tampered['ciphertext'] = ($encrypted['ciphertext'][0] === 'f' ? '0' : 'f')
-            . substr($encrypted['ciphertext'], 1);
+        // Decode to raw binary, flip all bits of the first byte, then pass tampered
+        // raw binary directly to decrypt() — matching how carrier extraction delivers data.
+        $raw     = base64_decode($encrypted['ciphertext']);
+        $raw[0]  = chr(ord($raw[0]) ^ 0xFF);
 
-        $this->crypto->decrypt($tampered['ciphertext'], $dek['dek'], $encrypted['iv'], $encrypted['auth_tag']);
+        $this->crypto->decrypt($raw, $dek['dek'], $encrypted['iv'], $encrypted['auth_tag']);
     }
 
     #[Test]

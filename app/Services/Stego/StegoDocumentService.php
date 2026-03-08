@@ -75,10 +75,12 @@ class StegoDocumentService
         $hash        = $this->crypto->hashDocument($plaintext);
 
         // -----------------------------------------------------------------
-        // Step 3: Segment the ciphertext across available carriers
+        // Step 3: Compute carrier capacities, then split ciphertext into
+        //         fixed 2 MB chunks — one whole carrier per chunk.
         // -----------------------------------------------------------------
-        $numSegments  = count($carrierPaths);
-        $segments     = $this->segmentation->segment($encrypted['ciphertext'], $numSegments);
+        $capacities  = array_map(fn ($p) => $this->stego->capacity($p), $carrierPaths);
+        $segments    = $this->segmentation->split($encrypted['ciphertext'], $capacities);
+        $numSegments = count($segments);
 
         // -----------------------------------------------------------------
         // Step 4 & 5: Embed each chunk into its carrier and upload to S3
@@ -100,6 +102,7 @@ class StegoDocumentService
                 'stego_hash_sha256'=> $hash,
                 'stego_dek_salt'   => $dekResult['salt'],
                 'stego_dek_iter'   => $dekResult['iterations'],
+                'compressed'       => true,
                 's3_key'           => null,
             ]);
 
@@ -134,12 +137,13 @@ class StegoDocumentService
                 $carrierRecords[] = $carrier;
 
                 // Persist the segment record.
+                // base64-encode the raw binary chunk for safe storage in the longtext column.
                 $segKey = $this->cloud->segmentKey($stegoDoc->id, $idx);
                 $segmentRecords[] = [
                     'stego_document_id' => $stegoDoc->id,
                     'stego_carrier_id'  => $carrier->id,
                     'segment_index'     => $idx,
-                    'encrypted_chunk'   => $seg['chunk'],
+                    'encrypted_chunk'   => base64_encode($seg['chunk']),
                     's3_key'            => $segKey,
                     'chunk_hash'        => $seg['hash'],
                 ];
