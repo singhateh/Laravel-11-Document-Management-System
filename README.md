@@ -1,66 +1,205 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+﻿# Test Caps — Document Management System with Steganography
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A **Laravel 12 + React (Inertia.js)** document management system featuring LSB steganography for secure document embedding, role-based access control, file sharing, and email notifications.
 
-## About Laravel
+**Tech Stack:** PHP 8.4 · Laravel 12 · React 18 · TypeScript · Inertia.js · Vite · Tailwind CSS · SQLite/MySQL · Python (stegano + Pillow)
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Prerequisites
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Make sure the following are installed before you begin:
 
-## Learning Laravel
+| Tool | Version |
+|------|---------|
+| PHP | 8.4 or higher |
+| Composer | 2.x |
+| Node.js | 18 or higher |
+| pnpm | 8 or higher |
+| Python | 3.9 or higher |
+| Git | any recent version |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+> **Windows note:** Ensure `php`, `composer`, `node`, `pnpm`, `python`, and `git` are all available on your system PATH.
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+---
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Installation
 
-## Laravel Sponsors
+### 1. Clone the repository
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```bash
+git clone <repository-url> Test_Caps
+cd Test_Caps
+```
 
-### Premium Partners
+### 2. Install PHP dependencies
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+```bash
+composer install
+```
 
-## Contributing
+### 3. Install Node dependencies
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```bash
+pnpm install
+```
 
-## Code of Conduct
+### 4. Install Python dependencies
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+The steganography engine requires two Python packages:
 
-## Security Vulnerabilities
+```bash
+pip install stegano Pillow
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 5. Set up the environment file
 
-## License
+```bash
+cp .env.example .env
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Then open `.env` and update the relevant values:
+
+```dotenv
+APP_NAME="Test Caps"
+APP_URL=http://localhost:8000
+
+# Database — SQLite is used by default (no extra setup needed)
+DB_CONNECTION=sqlite
+
+# Python path — change to full path if 'python' is not on your PATH
+# Windows example: C:\Users\USER\AppData\Local\Programs\Python\Python312\python.exe
+PYTHON_PATH=python
+
+# Mail — use 'log' during development (emails go to storage/logs/laravel.log)
+MAIL_MAILER=log
+MAIL_FROM_ADDRESS="hello@example.com"
+MAIL_FROM_NAME="${APP_NAME}"
+```
+
+### 6. Generate the application key
+
+```bash
+php artisan key:generate
+```
+
+### 7. Run database migrations
+
+```bash
+php artisan migrate
+```
+
+To also seed the database with sample data:
+
+```bash
+php artisan db:seed
+```
+
+---
+
+## Running the Application
+
+You need **three processes** running simultaneously. Open three separate terminal windows:
+
+**Terminal 1 — Laravel development server**
+```bash
+php artisan serve
+```
+
+**Terminal 2 — Vite frontend (hot-reload)**
+```bash
+pnpm dev
+```
+
+**Terminal 3 — Queue worker** (required for email notifications and background jobs)
+```bash
+php artisan queue:work
+```
+
+Then open http://localhost:8000 in your browser.
+
+---
+
+## Using MySQL Instead of SQLite
+
+Update your `.env`:
+
+```dotenv
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=test_caps
+DB_USERNAME=root
+DB_PASSWORD=your_password
+```
+
+Create the database, then run migrations:
+
+```bash
+php artisan migrate
+```
+
+---
+
+## Building for Production
+
+```bash
+# Build frontend assets
+pnpm build
+
+# Optimize Laravel
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+```
+
+Set `APP_ENV=production` and `APP_DEBUG=false` in `.env` before deploying.
+
+---
+
+## Running Tests
+
+```bash
+php artisan test
+```
+
+---
+
+## Project Structure
+
+```
+app/
+  Http/Controllers/   — Application controllers
+  Models/             — Eloquent models
+  Services/           — Business logic (including StegoService)
+  Policies/           — Authorization policies
+python/
+  stego_lsb.py        — LSB steganography engine (called via subprocess)
+resources/js/
+  Pages/              — React/Inertia page components
+  Components/         — Shared React components
+database/migrations/  — Database schema migrations
+routes/
+  web.php             — Web routes
+  api.php             — API routes
+```
+
+---
+
+## Troubleshooting
+
+**Steganography operations fail**
+- Verify Python is installed: `python --version`
+- Verify packages: `pip show stegano Pillow`
+- Set the full Python path in `.env`: `PYTHON_PATH=C:\Path\To\python.exe`
+
+**Emails are not sending**
+- In development, `MAIL_MAILER=log` writes emails to `storage/logs/laravel.log`
+- For real sending, configure SMTP credentials in `.env`
+
+**Queue jobs are not processing**
+- Make sure `php artisan queue:work` is running in a separate terminal
+
+**Page shows blank or 500 error**
+- Run `php artisan config:clear` then `php artisan serve` again
+- Check `storage/logs/laravel.log` for details
