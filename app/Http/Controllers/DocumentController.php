@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Http\Requests\StoreDocumentRequest;
 use App\Services\DocumentService;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 
 
@@ -133,11 +134,18 @@ class DocumentController extends Controller
 
     public function uploadDocumentFiles(StoreDocumentRequest $request)
     {
-        $folderId = $this->documentService->setUploadDocumentFiles($request);
+        try {
+            $folderId = $this->documentService->setUploadDocumentFiles($request);
 
-        AccessLog::log('upload', 'document', $folderId, $request);
+            AccessLog::log('upload', 'document', $folderId, $request);
 
-        return response()->json(['message' => 'Files uploaded successfully', 'url' => route('getFiles', $folderId)], 200);
+            return response()->json(['message' => 'Files uploaded successfully', 'url' => route('getFiles', $folderId)], 200);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        } catch (\Exception $e) {
+            Log::error('Upload error: ' . $e->getMessage(), ['exception' => $e]);
+            return response()->json(['error' => 'File upload failed: ' . $e->getMessage()], 500);
+        }
     }
 
     public function show(Document $document)

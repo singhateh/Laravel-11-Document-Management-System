@@ -2,6 +2,7 @@
 import { Head } from '@inertiajs/react';
 import { PageProps } from '@/types';
 import { FormEvent, useState } from 'react';
+import axios from 'axios';
 
 interface StegoDoc {
     id: number;
@@ -17,30 +18,68 @@ interface DecodeProps extends PageProps {
 
 export default function Decode({ auth, stegoDocs, errors = {} }: DecodeProps) {
     const [selected, setSelected] = useState('');
+    const [submitError, setSubmitError] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const handleSubmit = (e: FormEvent) => {
+    const parseDownloadFilename = (contentDisposition?: string): string => {
+        if (!contentDisposition) return 'decoded_file';
+
+        const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match?.[1]) {
+            return decodeURIComponent(utf8Match[1]);
+        }
+
+        const quotedMatch = contentDisposition.match(/filename="([^"]+)"/i);
+        if (quotedMatch?.[1]) {
+            return quotedMatch[1];
+        }
+
+        const plainMatch = contentDisposition.match(/filename=([^;]+)/i);
+        return plainMatch?.[1]?.trim() || 'decoded_file';
+    };
+
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
-        // Raw DOM form POST so the browser handles the binary file download.
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = route('stego.decode');
-        form.style.display = 'none';
+        if (!selected || isSubmitting) return;
 
-        const addHidden = (name: string, value: string) => {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = name;
-            input.value = value;
-            form.appendChild(input);
-        };
+        setSubmitError('');
+        setIsSubmitting(true);
 
-        const tokenMeta = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]');
-        if (tokenMeta) addHidden('_token', tokenMeta.content);
-        addHidden('stego_document_id', selected);
+        try {
+            const payload = new FormData();
+            payload.append('stego_document_id', selected);
 
-        document.body.appendChild(form);
-        form.submit();
-        document.body.removeChild(form);
+            const response = await axios.post(route('stego.decode'), payload, {
+                responseType: 'blob',
+            });
+
+            const contentType = response.headers['content-type'] || '';
+            if (contentType.includes('application/json')) {
+                const text = await response.data.text();
+                const parsed = JSON.parse(text) as { message?: string };
+                throw new Error(parsed.message || 'Decode failed.');
+            }
+
+            const filename = parseDownloadFilename(response.headers['content-disposition']);
+            const blobUrl = window.URL.createObjectURL(response.data);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(blobUrl);
+        } catch (error: unknown) {
+            if (axios.isAxiosError(error) && error.response?.status === 419) {
+                setSubmitError('Session expired or CSRF token mismatch. Please refresh and log in again.');
+            } else if (error instanceof Error) {
+                setSubmitError(error.message);
+            } else {
+                setSubmitError('Decode failed. Please try again.');
+            }
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     return (
@@ -74,6 +113,11 @@ export default function Decode({ auth, stegoDocs, errors = {} }: DecodeProps) {
                     {errors.decode && (
                         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                             ⚠️ {errors.decode}
+                        </div>
+                    )}
+                    {submitError && (
+                        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            ⚠️ {submitError}
                         </div>
                     )}
 
@@ -127,10 +171,10 @@ export default function Decode({ auth, stegoDocs, errors = {} }: DecodeProps) {
                             <div className="mt-6 flex justify-end">
                                 <button
                                     type="submit"
-                                    disabled={!selected}
+                                    disabled={!selected || isSubmitting}
                                     className="rounded-md bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-40"
                                 >
-                                    🔓 Decode & Download
+                                    {isSubmitting ? 'Decoding...' : '🔓 Decode & Download'}
                                 </button>
                             </div>
                         </div>

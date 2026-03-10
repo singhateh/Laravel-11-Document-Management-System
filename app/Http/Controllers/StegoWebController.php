@@ -61,6 +61,9 @@ class StegoWebController extends Controller
         // Master Key is derived at login and kept server-side only.
         $masterKey = $this->resolveSessionKey();
         if ($masterKey === null) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Session expired. Please log in again.'], 419);
+            }
             return back()->withErrors(['session' => 'Session expired. Please log in again to obtain a fresh Master Key.']);
         }
 
@@ -158,6 +161,9 @@ class StegoWebController extends Controller
 
             return response()->download($tmp, $filename)->deleteFileAfterSend(true);
         } catch (\Exception $e) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Decoding failed: ' . $e->getMessage()], 422);
+            }
             return back()->withErrors(['decode' => 'Decoding failed: ' . $e->getMessage()]);
         }
     }

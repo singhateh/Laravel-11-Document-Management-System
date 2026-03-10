@@ -1,4 +1,4 @@
-import { FormEventHandler, useState } from 'react';
+import { FormEventHandler, useEffect, useState } from 'react';
 import Modal from '@/Components/Modal';
 import InputLabel from '@/Components/InputLabel';
 import PrimaryButton from '@/Components/PrimaryButton';
@@ -34,6 +34,15 @@ export default function DragDropUploadModal({
     const [isDragging, setIsDragging] = useState(false);
     
     const folderList = Array.isArray(folders) ? folders : [];
+
+    useEffect(() => {
+        if (!show) return;
+
+        // Ensure upload always has a valid target folder when folders exist.
+        if (!folderId && folderList.length > 0) {
+            setFolderId(folderList[0].id);
+        }
+    }, [show, folderId, folderList]);
 
     const handleDragEnter = (e: React.DragEvent) => {
         e.preventDefault();
@@ -89,8 +98,15 @@ export default function DragDropUploadModal({
             formData.append('files[]', files[i]);
         }
         
-        if (folderId) {
-            formData.append('folder_id', folderId.toString());
+        const resolvedFolderId = folderId || (folderList.length > 0 ? folderList[0].id : '');
+        if (!resolvedFolderId) {
+            setError('No folder available. Please create a folder first.');
+            setUploading(false);
+            return;
+        }
+
+        if (resolvedFolderId) {
+            formData.append('folder_id', resolvedFolderId.toString());
         }
         
         formData.append('visibility', visibility);
@@ -115,7 +131,7 @@ export default function DragDropUploadModal({
                 const errors = Object.values(err.response.data.errors).flat();
                 setError(errors.join(', '));
             } else {
-                setError(err.response?.data?.message || 'Upload failed');
+                setError(err.response?.data?.error || err.response?.data?.message || 'Upload failed');
             }
         } finally {
             setUploading(false);

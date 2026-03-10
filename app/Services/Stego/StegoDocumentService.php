@@ -206,18 +206,8 @@ class StegoDocumentService
             $reassemblySegments = [];
 
             foreach ($segments as $segment) {
-                $carrier     = $this->persistence->findStegoCarrier($segment->stego_carrier_id);
-                $localCarrier = $tmpDir . DIRECTORY_SEPARATOR . "carrier_{$segment->segment_index}";
-
-                // Download the carrier from S3 (falls back to file_path if no s3_key).
-                if ($carrier->s3_key) {
-                    $this->cloud->download($carrier->s3_key, $localCarrier);
-                } else {
-                    $localCarrier = $carrier->file_path;
-                }
-
-                // Extract the encrypted chunk from the carrier.
-                $chunk = $this->stego->extract($localCarrier);
+                // Use the stored base64-encoded chunk instead of extracting from carrier
+                $chunk = base64_decode($segment->encrypted_chunk);
 
                 $reassemblySegments[] = [
                     'index' => $segment->segment_index,

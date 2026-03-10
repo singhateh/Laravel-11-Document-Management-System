@@ -88,8 +88,12 @@ class DocumentService
         $encrypted   = $this->crypto->encrypt($plaintext, $dekResult['dek']);
         $hash        = $this->crypto->hashDocument($plaintext);
 
-        // Overwrite the file on disk with the raw ciphertext bytes.
-        file_put_contents($absolutePath, hex2bin($encrypted['ciphertext']));
+        // Overwrite the file on disk with raw ciphertext bytes.
+        $rawCiphertext = base64_decode($encrypted['ciphertext'], true);
+        if ($rawCiphertext === false) {
+            throw new \RuntimeException('Failed to decode encrypted document ciphertext.');
+        }
+        file_put_contents($absolutePath, $rawCiphertext);
 
         // Persist encryption metadata so the file can be decrypted later.
         $document->update([
@@ -131,8 +135,8 @@ class DocumentService
             return file_get_contents($absolutePath);
         }
 
-        // Read the raw ciphertext bytes and hex-encode for CryptoService.
-        $cipherHex = bin2hex(file_get_contents($absolutePath));
+        // Read raw ciphertext bytes from disk for CryptoService.
+        $ciphertext = file_get_contents($absolutePath);
 
         $masterKey = $this->getMasterKey();
 
@@ -146,7 +150,7 @@ class DocumentService
 
         // Decrypt and authenticate.
         $plaintext = $this->crypto->decrypt(
-            $cipherHex,
+            $ciphertext,
             $dekResult['dek'],
             $document->enc_iv,
             $document->enc_auth_tag
@@ -353,11 +357,11 @@ class DocumentService
         $folderId = $request->input('folder_id');
 
         if ($request->has('url')) {
-            $this->uploadUrl($request);
+            $folderId = $this->uploadUrl($request);
         } elseif ($request->has('folder_name')) {
             $folderId = $this->uploadFolder($request);
         } else {
-            $this->uploadFiles($request);
+            $folderId = $this->uploadFiles($request);
         }
 
         return  $folderId;
@@ -431,14 +435,18 @@ class DocumentService
     protected function uploadFolder($request)
     {
         $folderId         = (int) $request->input('folder_id');
-        $parentFolderName = Folder::find($folderId)?->name;
+        $parentFolderModel = Folder::find($folderId);
+        if (!$parentFolderModel) {
+            throw new \InvalidArgumentException('Invalid folder_id provided for upload.');
+        }
+        $parentFolderName = $parentFolderModel->name;
         $childFolderName  = $request->input('folder_name') ?? uniqid();
         $visibility       = $request->input('visibility') ?? 'public';
         $parentFolder     = public_path('documents/' . $parentFolderName);
         $createdChildFolder = null;
 
         if (!$request->hasFile('files')) {
-            return response()->json(['message' => 'No files uploaded'], 400);
+            throw new \InvalidArgumentException('No files uploaded.');
         }
 
         foreach ($request->file('files') as $file) {
@@ -467,14 +475,18 @@ class DocumentService
     protected function uploadFiles($request)
     {
         $folderId        = (int) $request->input('folder_id');
-        $folderName      = Folder::find($folderId)->name;
+        $folder          = Folder::find($folderId);
+        if (!$folder) {
+            throw new \InvalidArgumentException('Invalid folder_id provided for upload.');
+        }
+        $folderName      = $folder->name;
         $parentFolder    = public_path('documents/' . $folderName);
         $childFolderName = uniqid();
         $createdChildFolder = null;
         $lastDocument       = null;
 
         if (!$request->hasFile('files')) {
-            return response()->json(['message' => 'No files uploaded'], 400);
+            throw new \InvalidArgumentException('No files uploaded.');
         }
 
         foreach ($request->file('files') as $file) {
@@ -508,17 +520,17 @@ class DocumentService
             }
         }
 
-        return $lastDocument;
+        return $createdChildFolder ?? $folderId;
     }
 
-    protected function uploadUrl($request): Document
+    protected function uploadUrl($request): int
     {
         $folderId   = $request->input('folder_id');
         $urlName    = $request->input('name');
         $url        = $request->input('url');
         $visibility = $request->input('visibility');
 
-        return Document::create([
+        Document::create([
             'name'          => $urlName,
             'original_name' => $urlName,
             'extension'     => $this->isYouTubeUrl($url) ? 'youtube' : '',
@@ -530,6 +542,8 @@ class DocumentService
             'owner_id'      => Auth::id(),
             'document_date' => now(),
         ]);
+
+        return $folderId;
     }
 
     protected function getFolderInfo($folderId)

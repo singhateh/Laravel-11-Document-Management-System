@@ -5,6 +5,7 @@ namespace App\Http\Concerns;
 use App\Models\Document;
 use Illuminate\Support\Facades\Storage;
 use App\Models\StegoDocument;
+use App\Services\DocumentService;
 
 /**
  * HasStegoEncoding
@@ -102,6 +103,14 @@ trait HasStegoEncoding
      */
     protected function readDocumentPlaintext(Document $document): string
     {
+        // If the source document is encrypted at rest, decode to plaintext bytes
+        // before feeding it to Stego so the recovered file remains usable.
+        if ($document->is_encrypted) {
+            /** @var DocumentService $documentService */
+            $documentService = app(DocumentService::class);
+            return $documentService->decryptDocumentContent($document);
+        }
+
         $absolutePath = public_path($document->file_path);
 
         if (!file_exists($absolutePath)) {
