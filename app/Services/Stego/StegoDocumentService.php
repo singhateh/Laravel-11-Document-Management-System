@@ -5,6 +5,7 @@ namespace App\Services\Stego;
 use App\Models\Document;
 use Exception;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 /**
@@ -59,7 +60,8 @@ class StegoDocumentService
         string $plaintext,
         string $masterKey,
         array $carrierPaths,
-        ?int $documentId = null
+        ?int $documentId = null,
+        ?int $existingDocId = null,
     ): array {
         if (empty($carrierPaths)) {
             throw new Exception('At least one carrier file is required for encoding.');
@@ -78,7 +80,12 @@ class StegoDocumentService
         // Step 3: Compute carrier capacities, then split ciphertext into
         //         fixed 2 MB chunks — one whole carrier per chunk.
         // -----------------------------------------------------------------
-        $capacities  = array_map(fn ($p) => $this->stego->capacity($p), $carrierPaths);
+        // Cache capacity by file hash — avoids re-running the Python driver for
+        // the same carrier image on repeated encode calls (e.g. test/dev cycles).
+        $capacities  = array_map(function ($p) {
+            $cacheKey = 'stego.capacity.' . hash_file('md5', $p);
+            return Cache::remember($cacheKey, 3600, fn () => $this->stego->capacity($p));
+        }, $carrierPaths);
         $segments    = $this->segmentation->split($encrypted['ciphertext'], $capacities);
         $numSegments = count($segments);
 
@@ -91,20 +98,28 @@ class StegoDocumentService
         $segmentRecords  = [];
         $qualityMetrics  = [];   // keyed by segment index
 
+        $stegoDoc = null;
         try {
-            // First, persist the StegoDocument shell so we have an ID for key naming.
-            $stegoDoc = $this->persistence->createStegoDocument([
-                'document_id'      => $documentId,
-                'user_id'          => $userId,
-                'ciphertext'       => $encrypted['ciphertext'],
-                'stego_iv'         => $encrypted['iv'],
-                'stego_auth_tag'   => $encrypted['auth_tag'],
-                'stego_hash_sha256'=> $hash,
-                'stego_dek_salt'   => $dekResult['salt'],
-                'stego_dek_iter'   => $dekResult['iterations'],
-                'compressed'       => true,
-                's3_key'           => null,
-            ]);
+            // Persist or update the StegoDocument shell so we have an ID for key naming.
+            // When $existingDocId is provided the controller pre-created a 'pending' row;
+            // we fill in the crypto fields here.  Otherwise create a new row.
+            $coreData = [
+                'document_id'       => $documentId,
+                'user_id'           => $userId,
+                'ciphertext'        => $encrypted['ciphertext'],
+                'stego_iv'          => $encrypted['iv'],
+                'stego_auth_tag'    => $encrypted['auth_tag'],
+                'stego_hash_sha256' => $hash,
+                'stego_dek_salt'    => $dekResult['salt'],
+                'stego_dek_iter'    => $dekResult['iterations'],
+                'compressed'        => true,
+                's3_key'            => null,
+                'status'            => 'pending',
+            ];
+
+            $stegoDoc = $existingDocId
+                ? $this->persistence->updateStegoDocument($existingDocId, $coreData)
+                : $this->persistence->createStegoDocument($coreData);
 
             foreach ($segments as $seg) {
                 $idx         = $seg['index'];
@@ -161,6 +176,18 @@ class StegoDocumentService
                 'payload'     => ['document_id' => $documentId, 'num_segments' => $numSegments],
             ]);
 
+            $stegoDoc->update(['status' => 'ready']);
+
+            // Bust the user's paginated list cache so the new document
+            // appears immediately on the next index() request.
+            Cache::forget("stego.index.u{$userId}");
+
+        } catch (\Throwable $e) {
+            $stegoDoc?->update([
+                'status'        => 'failed',
+                'failed_reason' => substr($e->getMessage(), 0, 500),
+            ]);
+            throw $e;
         } finally {
             // Clean up temp files.
             $this->cleanupDir($tmpDir);

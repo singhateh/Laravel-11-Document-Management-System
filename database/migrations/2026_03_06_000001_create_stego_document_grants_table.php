@@ -22,6 +22,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('stego_document_grants')) {
+            return;
+        }
+
         Schema::create('stego_document_grants', function (Blueprint $table) {
             $table->id();
 

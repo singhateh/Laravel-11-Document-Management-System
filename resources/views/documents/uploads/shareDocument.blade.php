@@ -21,7 +21,7 @@
                     <div class="form-group col-md-12">
                         <div class="input-group form-group">
                             <input type="url" readonly class="form-control custom-input-lg col-md-9"
-                                id="sharedUrlId" name="url">
+                                id="sharedUrlId">
                             <div class="btn btn-xs" onclick="copyUrl()">Copy</div>
                         </div>
                     </div>

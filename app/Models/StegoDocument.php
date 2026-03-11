@@ -21,6 +21,8 @@ class StegoDocument extends Model
         'stego_dek_iter',
         'compressed',
         's3_key',
+        'status',
+        'failed_reason',
     ];
 
     protected $casts = [

@@ -89,6 +89,35 @@ trait HasStegoEncoding
         }
     }
 
+    /**
+     * Stage plaintext + uploaded carrier files to a persistent storage
+     * directory under storage/app/stego-tmp/ so a queue worker can access
+     * them after the HTTP request has completed.
+     *
+     * Returns [storageRelativePlaintextPath, storageRelativeCarrierPaths[]].
+     *
+     * @param  string                              $plaintext
+     * @param  \Illuminate\Http\UploadedFile[]     $uploadedFiles
+     * @return array{0: string, 1: string[]}
+     */
+    protected function stageForQueue(string $plaintext, array $uploadedFiles): array
+    {
+        $dir = 'stego-tmp/' . uniqid('enc_', true);
+
+        $plainRelPath = $dir . '/plaintext.bin';
+        Storage::put($plainRelPath, $plaintext);
+
+        $carrierRelPaths = [];
+        foreach ($uploadedFiles as $file) {
+            $ext  = strtolower($file->getClientOriginalExtension());
+            $name = uniqid('carrier_') . ($ext ? '.' . $ext : '');
+            $file->storeAs($dir, $name);
+            $carrierRelPaths[] = $dir . '/' . $name;
+        }
+
+        return [$plainRelPath, $carrierRelPaths];
+    }
+
     // -------------------------------------------------------------------------
     // Document helpers
     // -------------------------------------------------------------------------

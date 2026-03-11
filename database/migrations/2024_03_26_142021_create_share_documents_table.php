@@ -17,11 +17,10 @@ return new class extends Migration
             $table->string('slug')->nullable();
             $table->string('token')->unique();
             $table->string('shared_id')->nullable();
-            $table->string('url')->nullable();
             $table->date('valid_until')->nullable();
             $table->enum('visibility', ['public', 'private'])->default('public');
-            $table->enum('can_download', ['yes', 'no'])->default('yes');
-            $table->enum('can_upload', ['yes', 'no'])->default('no');
+            $table->boolean('can_download')->default(true);
+            $table->boolean('can_upload')->default(false);
             $table->morphs('user');
             $table->morphs('share');
             $table->timestamps();

@@ -47,6 +47,22 @@ class PersistenceService
     }
 
     /**
+     * Update an existing StegoDocument (e.g. fill in crypto fields on a
+     * pending skeleton row created before the encode job was dispatched).
+     *
+     * @param  int   $id
+     * @param  array $data
+     * @return StegoDocument
+     * @throws Exception
+     */
+    public function updateStegoDocument(int $id, array $data): StegoDocument
+    {
+        $doc = StegoDocument::findOrFail($id);
+        $doc->update($data);
+        return $doc->fresh();
+    }
+
+    /**
      * Find a StegoDocument by its primary key, eager-loading segments.
      *
      * @param  int $id

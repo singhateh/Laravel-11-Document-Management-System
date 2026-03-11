@@ -342,11 +342,11 @@ class DocumentService
 
     public function getDocumentNotifications($documentId)
     {
-        return Notification::with('user')
-            ->select('id', 'user_id', 'user_type', 'activity_type', 'model_type', 'model_id', 'message', 'status', 'dismiss_status', 'created_by_type', 'created_by_id', 'created_at')
+        return Notification::with('notifiable', 'createdBy')
+            ->select('id', 'notifiable_id', 'notifiable_type', 'activity_type', 'model_type', 'model_id', 'message', 'status', 'dismiss_status', 'created_by_user_id', 'created_at')
             ->selectRaw("DATE_FORMAT(created_at, '%M %e %Y') as date, COUNT(*) as count")
             ->where('model_id', $documentId)
-            ->groupBy('date', 'id', 'user_id', 'user_type', 'activity_type', 'model_type', 'model_id', 'message', 'status', 'dismiss_status', 'created_by_type', 'created_by_id', 'created_at')
+            ->groupBy('date', 'id', 'notifiable_id', 'notifiable_type', 'activity_type', 'model_type', 'model_id', 'message', 'status', 'dismiss_status', 'created_by_user_id', 'created_at')
             ->latest()
             ->get();
     }

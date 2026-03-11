@@ -17,18 +17,19 @@ return new class extends Migration
             $table->foreignId('document_id')->nullable()->constrained('documents')->nullOnDelete();
             $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
 
-            // Encryption metadata (AES-256-GCM)
-            $table->text('ciphertext');                     // hex-encoded encrypted content
-            $table->string('iv', 64);                       // hex-encoded initialisation vector (12 bytes → 24 hex)
-            $table->string('auth_tag', 64);                 // hex-encoded GCM authentication tag (16 bytes → 32 hex)
-            $table->string('hash_sha256', 64);              // SHA-256 of original plaintext for integrity
+            // Encryption metadata (AES-256-GCM) — final column names with stego_ prefix
+            $table->longText('ciphertext');
+            $table->string('stego_iv', 64);
+            $table->string('stego_auth_tag', 64);
+            $table->string('stego_hash_sha256', 64);
 
             // Key derivation metadata
-            $table->string('dek_salt', 64)->nullable();     // hex-encoded DEK derivation salt
-            $table->unsignedInteger('dek_iterations')->default(10000);
+            $table->string('stego_dek_salt', 64)->nullable();
+            $table->unsignedInteger('stego_dek_iter')->default(10000);
+            $table->boolean('compressed')->default(true);
 
             // Storage
-            $table->string('s3_key')->nullable();           // AWS S3 object key for the stego file
+            $table->string('s3_key')->nullable();
             $table->string('s3_url')->nullable();
 
             $table->timestamps();

@@ -27,7 +27,6 @@ return new class extends Migration
             $table->integer('status_code')->nullable();
             $table->json('payload')->nullable();
             $table->timestamp('accessed_at')->useCurrent();
-            $table->timestamps();
 
             $table->index(['user_id', 'accessed_at']);
             $table->index(['resource', 'resource_id']);

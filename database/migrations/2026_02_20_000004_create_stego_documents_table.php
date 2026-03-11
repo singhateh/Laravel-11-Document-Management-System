@@ -16,8 +16,8 @@ return new class extends Migration
             $table->id();
             $table->foreignId('stego_document_id')->constrained('stego_documents')->cascadeOnDelete();
             $table->foreignId('stego_carrier_id')->constrained('stego_carriers')->cascadeOnDelete();
-            $table->unsignedTinyInteger('segment_index');   // order of this chunk (0-based)
-            $table->text('encrypted_chunk');                // base64-encoded encrypted bytes
+            $table->unsignedSmallInteger('segment_index'); // order of this chunk (0-based, max 65 535)
+            $table->longText('encrypted_chunk');            // base64-encoded encrypted bytes
             $table->string('s3_key')->nullable();           // AWS S3 object key for this chunk
             $table->string('chunk_hash');                   // SHA-256 of this chunk for integrity
             $table->timestamps();

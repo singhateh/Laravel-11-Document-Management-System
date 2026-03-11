@@ -21,6 +21,8 @@ return new class extends Migration
             $table->unsignedBigInteger('size');    // bytes
             $table->string('s3_key')->nullable();  // AWS S3 object key
             $table->string('s3_url')->nullable();  // AWS S3 URL
+            $table->float('psnr', 8, 4)->nullable()
+                ->comment('PSNR in dB measured after LSB embedding (images only; null otherwise)');
             $table->foreignId('uploaded_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 

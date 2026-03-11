@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use Illuminate\Support\Carbon;
-use PhpParser\Node\Expr\Cast\Bool_;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -15,7 +14,13 @@ class ShareDocument extends Model
     protected $fillable = [
         'shared_id', 'name', 'token',
         'slug', 'valid_until', 'visibility',
-        'share_id', 'share_type', 'user_type', 'user_id'
+        'share_id', 'share_type', 'user_type', 'user_id',
+        'can_download', 'can_upload',
+    ];
+
+    protected $casts = [
+        'can_download' => 'boolean',
+        'can_upload'   => 'boolean',
     ];
 
 

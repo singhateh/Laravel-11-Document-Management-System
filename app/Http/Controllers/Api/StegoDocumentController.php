@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Concerns\HasStegoEncoding;
+use App\Jobs\EncodeStegoDocumentJob;
 use App\Models\Document;
 use App\Models\StegoDocument;
 use App\Models\StegoDocumentGrant;
@@ -13,6 +14,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -51,12 +53,16 @@ class StegoDocumentController extends Controller
      */
     public function index(): JsonResponse
     {
-        $docs = Auth::user()
-            ->stegoDocuments()
-            ->with(['document:id,name,extension'])
-            ->withCount('segments')
-            ->latest()
-            ->paginate(20);
+        $docs = Cache::remember(
+            'stego.index.u' . Auth::id(),
+            30,
+            fn () => Auth::user()
+                ->stegoDocuments()
+                ->with(['document:id,name,extension'])
+                ->withCount('segments')
+                ->latest()
+                ->paginate(20)
+        );
 
         return response()->json($docs);
     }
@@ -74,10 +80,15 @@ class StegoDocumentController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $doc = Auth::user()
-            ->stegoDocuments()
-            ->with(['document', 'segments'])
-            ->findOrFail($id);
+        // Short TTL so pending→ready status transitions surface quickly.
+        $doc = Cache::remember(
+            "stego.doc.{$id}.u" . Auth::id(),
+            30,
+            fn () => Auth::user()
+                ->stegoDocuments()
+                ->with(['document', 'segments'])
+                ->findOrFail($id)
+        );
 
         return response()->json($doc);
     }
@@ -134,37 +145,35 @@ class StegoDocumentController extends Controller
         $document = Document::findOrFail($request->document_id);
 
         try {
-            $plaintext    = $this->readDocumentPlaintext($document);
+            $plaintext = $this->readDocumentPlaintext($document);
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $carrierPaths = $this->storeCarriersTmp($request->file('carriers'));
+        // Pre-create a pending skeleton so the client receives an ID to poll.
+        $pending = StegoDocument::create([
+            'document_id' => $document->id,
+            'user_id'     => $user->id,
+            'status'      => 'pending',
+        ]);
 
-        try {
-            $result = $this->stegoService->encode(
-                $user->id,
-                $plaintext,
-                $masterKey,
-                $carrierPaths,
-                $document->id
-            );
+        // Stage plaintext + carriers to persistent storage so the queue
+        // worker can read them after the HTTP request has ended.
+        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $request->file('carriers'));
 
-            $stegoDoc = $result['stego_document'];
+        EncodeStegoDocumentJob::dispatch(
+            $user->id,
+            $plainPath,
+            $masterKey,
+            $carrierPaths,
+            $document->id,
+            $pending->id,
+        );
 
-            return response()->json([
-                'stego_document_id' => $stegoDoc->id,
-                'document_id'       => $document->id,
-                'document_name'     => $document->name,
-                'segments_count'    => $stegoDoc->segments()->count(),
-                'quality_metrics'   => $result['quality_metrics'],
-                'created_at'        => $stegoDoc->created_at?->toISOString(),
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Encoding failed: ' . $e->getMessage()], 422);
-        } finally {
-            $this->releaseCarriers($carrierPaths);
-        }
+        return response()->json([
+            'message'           => 'Encoding queued. Check the stego document status to track progress.',
+            'stego_document_id' => $pending->id,
+        ], 202);
     }
 
     // -------------------------------------------------------------------------

@@ -23,20 +23,24 @@ return new class extends Migration
             $table->foreignId('folder_id')
                 ->nullable()
                 ->constrained()
-                ->onDelete('cascade') // or 'set null' depending on your requirements
-                ->onUpdate('cascade'); // or 'set null' depending on your requirements
-
-            // Changed from string to enum to match folders.visibility (type consistency).
+                ->onDelete('cascade')
+                ->onUpdate('cascade');
             $table->enum('visibility', ['public', 'private'])->default('public');
             $table->bigInteger('share')->default(0);
             $table->bigInteger('download')->default(0);
             $table->string('email')->nullable();
             $table->string('url')->nullable();
-            $table->string('contact')->nullable();
+            // AES-256-GCM encryption metadata
+            $table->boolean('is_encrypted')->default(false);
+            $table->string('enc_iv', 24)->nullable();
+            $table->string('enc_auth_tag', 32)->nullable();
+            $table->string('enc_dek_salt', 32)->nullable();
+            $table->unsignedInteger('enc_dek_iterations')->nullable();
+            $table->string('enc_hash_sha256', 64)->nullable();
             // Replaced free-text 'owner' with owner_id FK to users (3NF fix).
             $table->foreignId('owner_id')->nullable()->constrained('users')->onDelete('set null');
-            $table->timestamp('date')->nullable();
-            $table->string('emojies')->nullable();
+            $table->timestamp('document_date')->nullable();
+            $table->string('emojis')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });

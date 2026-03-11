@@ -14,7 +14,12 @@ return new class extends Migration
         Schema::create('users', function (Blueprint $table) {
             $table->id();
             $table->string('name');
+            $table->string('username')->unique()->nullable();
+            $table->enum('role', ['user', 'owner', 'admin'])->default('user');
+            $table->string('mkd_salt', 32)->nullable()
+                ->comment('PBKDF2-SHA256 salt for Master Key Derivation (hex, 32 chars = 16 bytes)');
             $table->string('email')->unique();
+            $table->string('avatar')->nullable();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->rememberToken();
