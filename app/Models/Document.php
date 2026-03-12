@@ -26,6 +26,11 @@ class Document extends Model
             if (!isset($document->position)) {
                 $document->position = static::max('position') + 1;
             }
+            
+            // Set private visibility by default
+            if (!isset($document->visibility)) {
+                $document->visibility = 'private';
+            }
         });
     }
 

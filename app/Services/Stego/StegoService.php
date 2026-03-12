@@ -244,6 +244,26 @@ class StegoService
 
         $decoded = json_decode($output, associative: true);
 
+        // Some third-party Python libs may print informational prompts before
+        // JSON output. If full output is not valid JSON, parse the last JSON-like line.
+        if (!is_array($decoded)) {
+            $lines = preg_split('/\R+/', $output) ?: [];
+
+            for ($i = count($lines) - 1; $i >= 0; $i--) {
+                $candidate = trim($lines[$i]);
+
+                if ($candidate === '') {
+                    continue;
+                }
+
+                $decoded = json_decode($candidate, associative: true);
+
+                if (is_array($decoded)) {
+                    break;
+                }
+            }
+        }
+
         if (!is_array($decoded)) {
             throw new Exception("Python stego script returned non-JSON output: {$output}");
         }

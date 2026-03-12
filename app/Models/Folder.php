@@ -26,6 +26,11 @@ class Folder extends Model
             if (!isset($folder->position)) {
                 $folder->position = static::max('position') + 1;
             }
+            
+            // Set private visibility by default
+            if (!isset($folder->visibility)) {
+                $folder->visibility = 'private';
+            }
         });
     }
 

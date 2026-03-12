@@ -1,6 +1,8 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router } from '@inertiajs/react';
 import { PageProps } from '@/types';
+import { useState } from 'react';
+import ShareModal from '@/Components/ShareModal';
 
 interface StegoDoc {
     id: number;
@@ -28,6 +30,14 @@ export default function Index({ auth, stegoDocs, flash }: StegoIndexProps) {
     const handleDelete = (id: number) => {
         if (!confirm('Delete this stego document? The carriers and segments will also be removed.')) return;
         router.delete(`/stego/${id}`, { preserveState: false });
+    };
+
+    const [showShareModal, setShowShareModal] = useState(false);
+    const [selectedStegoDoc, setSelectedStegoDoc] = useState<StegoDoc | null>(null);
+
+    const handleShare = (doc: StegoDoc) => {
+        setSelectedStegoDoc(doc);
+        setShowShareModal(true);
     };
 
     return (
@@ -149,6 +159,13 @@ export default function Index({ auth, stegoDocs, flash }: StegoIndexProps) {
                                                         🔓 Decode
                                                     </Link>
                                                     <button
+                                                        onClick={() => handleShare(s)}
+                                                        className="rounded px-2 py-1 text-sm text-green-600 hover:bg-green-50 hover:text-green-800"
+                                                        title="Share"
+                                                    >
+                                                        📤 Share
+                                                    </button>
+                                                    <button
                                                         onClick={() => handleDelete(s.id)}
                                                         className="rounded px-2 py-1 text-sm text-red-500 hover:bg-red-50 hover:text-red-700"
                                                         title="Delete"
@@ -193,6 +210,16 @@ export default function Index({ auth, stegoDocs, flash }: StegoIndexProps) {
                     )}
                 </div>
             </div>
+            {selectedStegoDoc && (
+                <ShareModal
+                    show={showShareModal}
+                    onClose={() => setShowShareModal(false)}
+                    documentId={selectedStegoDoc.id}
+                    documentName={selectedStegoDoc.document?.name ?? 'Stego File'}
+                    slug="stego"
+                    onSuccess={() => setShowShareModal(false)}
+                />
+            )}
         </AuthenticatedLayout>
     );
 }

@@ -5,6 +5,7 @@ import { useState } from 'react';
 import DragDropUploadModal from '@/Components/DragDropUploadModal';
 import DocumentPreview from '@/Components/DocumentPreview';
 import PrimaryButton from '@/Components/PrimaryButton';
+import ShareModal from '@/Components/ShareModal';
 import axios from 'axios';
 
 interface Document {
@@ -56,6 +57,8 @@ export default function Index({
     const [showPreview, setShowPreview] = useState(false);
     const [editingDocument, setEditingDocument] = useState<number | null>(null);
     const [editName, setEditName] = useState('');
+    const [showShareModal, setShowShareModal] = useState(false);
+    const [documentToShare, setDocumentToShare] = useState<{id: number; name: string} | null>(null);
 
     const handleUploadSuccess = () => {
         router.reload();
@@ -103,6 +106,14 @@ export default function Index({
         link.href = fileUrl;
         link.download = document.name;
         link.click();
+    };
+
+    const handleShare = (document: Document) => {
+        setDocumentToShare({
+            id: document.id,
+            name: document.name,
+        });
+        setShowShareModal(true);
     };
 
     const formatFileSize = (bytes: number) => {
@@ -286,7 +297,7 @@ export default function Index({
                                                         {new Date(document.created_at).toLocaleDateString()}
                                                     </td>
                                                     <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                                                        <div className="flex items-center justify-end gap-2">
+                                                         <div className="flex items-center justify-end gap-2">
                                                             <button
                                                                 onClick={() => handlePreview(document)}
                                                                 className="text-indigo-600 hover:text-indigo-900"
@@ -300,6 +311,13 @@ export default function Index({
                                                                 title="Download"
                                                             >
                                                                 ⬇️
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleShare(document)}
+                                                                className="text-blue-600 hover:text-blue-900"
+                                                                title="Share"
+                                                            >
+                                                                📤
                                                             </button>
                                                             <button
                                                                 onClick={() => handleEdit(document)}
@@ -340,6 +358,19 @@ export default function Index({
                 onClose={() => setShowPreview(false)}
                 document={selectedDocument}
             />
+
+            {documentToShare && (
+                <ShareModal
+                    show={showShareModal}
+                    onClose={() => setShowShareModal(false)}
+                    documentId={documentToShare.id}
+                    documentName={documentToShare.name}
+                    onSuccess={() => {
+                        setShowShareModal(false);
+                        setDocumentToShare(null);
+                    }}
+                />
+            )}
         </AuthenticatedLayout>
     );
 }

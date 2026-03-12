@@ -8,6 +8,7 @@ import SecondaryButton from '@/Components/SecondaryButton';
 import DangerButton from '@/Components/DangerButton';
 import TextInput from '@/Components/TextInput';
 import InputLabel from '@/Components/InputLabel';
+import ShareModal from '@/Components/ShareModal';
 
 interface Category {
     id: number;
@@ -32,11 +33,13 @@ function FolderRow({
     depth = 0,
     onDelete,
     onRename,
+    onShare,
 }: {
     folder: Folder;
     depth?: number;
     onDelete: (id: number, name: string) => void;
     onRename: (folder: Folder) => void;
+    onShare: (folder: Folder) => void;
 }) {
     const [open, setOpen] = useState(depth === 0);
     const hasSubs = folder.subfolders && folder.subfolders.length > 0;
@@ -75,6 +78,13 @@ function FolderRow({
                 {/* Actions */}
                 <div className="flex items-center gap-1">
                     <button
+                        onClick={() => onShare(folder)}
+                        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-blue-600"
+                        title="Share"
+                    >
+                        🔗
+                    </button>
+                    <button
                         onClick={() => onRename(folder)}
                         className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-indigo-600"
                         title="Rename"
@@ -100,6 +110,7 @@ function FolderRow({
                             depth={depth + 1}
                             onDelete={onDelete}
                             onRename={onRename}
+                            onShare={onShare}
                         />
                     ))}
                 </div>
@@ -111,10 +122,17 @@ function FolderRow({
 export default function Index({ auth, folders }: FoldersIndexProps) {
     const [showCreate, setShowCreate] = useState(false);
     const [showRename, setShowRename] = useState(false);
+    const [showShare, setShowShare] = useState(false);
     const [renameTarget, setRenameTarget] = useState<Folder | null>(null);
+    const [shareTarget, setShareTarget] = useState<Folder | null>(null);
     const [form, setForm] = useState({ name: '', parent_id: '' });
     const [renameValue, setRenameValue] = useState('');
     const [processing, setProcessing] = useState(false);
+
+    const handleShareOpen = (folder: Folder) => {
+        setShareTarget(folder);
+        setShowShare(true);
+    };
 
     const handleCreate = (e: React.FormEvent) => {
         e.preventDefault();
@@ -198,6 +216,7 @@ export default function Index({ auth, folders }: FoldersIndexProps) {
                                         folder={folder}
                                         onDelete={handleDelete}
                                         onRename={handleRenameOpen}
+                                        onShare={handleShareOpen}
                                     />
                                 ))}
                             </div>
@@ -273,6 +292,16 @@ export default function Index({ auth, folders }: FoldersIndexProps) {
                     </div>
                 </form>
             </Modal>
+            {showShare && shareTarget && (
+                <ShareModal
+                    show={showShare}
+                    onClose={() => setShowShare(false)}
+                    documentId={shareTarget.id}
+                    documentName={shareTarget.name}
+                    slug="folder"
+                />
+            )}
+
         </AuthenticatedLayout>
     );
 }

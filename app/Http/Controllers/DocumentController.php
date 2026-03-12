@@ -6,6 +6,7 @@ use App\Models\AccessLog;
 use App\Models\User;
 use App\Models\Folder;
 use App\Models\Document;
+use App\Models\ShareDocument;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -25,8 +26,34 @@ class DocumentController extends Controller
 
     public function index()
     {
+        $user = Auth::user();
+        
+        // Get all documents the user has permission to view
         $documents = Document::with('tags')
-            ->latest()->get();
+            ->where(function ($query) use ($user) {
+                // Owner's documents
+                $query->where('owner_id', $user->id)
+                    // Shared documents
+                    ->orWhereIn('id', function ($subquery) use ($user) {
+                        $subquery->select('share_id')
+                            ->from('share_documents')
+                            ->where('user_id', $user->id);
+                    });
+                    
+                // Admin can see all documents
+                if ($user->isAdmin()) {
+                    $query->orWhere('visibility', 'private');
+                }
+                
+                // Check for documents in shared folders
+                $sharedFolderIds = ShareDocument::where('user_id', $user->id)
+                    ->where('slug', 'folder')
+                    ->pluck('share_id');
+                    
+                $query->orWhereIn('folder_id', $sharedFolderIds);
+            })
+            ->latest()
+            ->get();
 
         $folders = generateSidebarMenu();
         $owners = User::get(['id', 'name', 'email']);
@@ -168,8 +195,8 @@ class DocumentController extends Controller
     {
         $user = Auth::user();
 
-        // Only the owner or admins may download private documents.
-        if ($document->visibility === 'private' && $document->owner_id !== $user->id) {
+        // Check if user has permission to view/download the document
+        if (!$user->can('view', $document)) {
             abort(403, 'You do not have permission to download this document.');
         }
 
@@ -212,7 +239,8 @@ class DocumentController extends Controller
     {
         $user = Auth::user();
 
-        if ($document->visibility === 'private' && $document->owner_id !== $user->id) {
+        // Check if user has permission to view the document
+        if (!$user->can('view', $document)) {
             abort(403, 'You do not have permission to view this document.');
         }
 
@@ -272,6 +300,11 @@ class DocumentController extends Controller
 
     public function update(Request $request, Document $document)
     {
+        // Check if user has permission to update the document
+        if (!Auth::user()->can('update', $document)) {
+            abort(403, 'You do not have permission to update this document.');
+        }
+
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'visibility' => 'sometimes|in:public,private',
@@ -288,6 +321,11 @@ class DocumentController extends Controller
 
     public function destroy(Document $document)
     {
+        // Check if user has permission to delete the document
+        if (!Auth::user()->can('delete', $document)) {
+            abort(403, 'You do not have permission to delete this document.');
+        }
+
         // Delete physical file
         $document->deleteFile();
         

@@ -235,6 +235,8 @@ Table comments {
 Table categories {
   id bigint [pk, increment]
   name varchar [not null]
+  slug varchar [unique]
+  description text
   created_at timestamp
   updated_at timestamp
 }
@@ -341,6 +343,10 @@ Table share_documents {
   // FIX: Changed from enum('yes','no') to boolean — consistent with documents.is_encrypted.
   can_download boolean [default: true]
   can_upload boolean [default: false]
+  can_edit boolean [default: false]
+  can_comment boolean [default: false]
+  can_share boolean [default: false]
+  permission_level varchar [default: 'viewer']
   user_type varchar [not null]
   user_id bigint [not null]
   share_type varchar [not null]
@@ -396,6 +402,8 @@ Table stego_carriers {
 
 Table stego_documents {
   id bigint [pk, increment]
+  status "enum('pending','ready','failed')" [default: 'ready']
+  failed_reason text
   document_id bigint [ref: > documents.id]
   user_id bigint [not null, ref: > users.id]
   // ---- Steganography encryption metadata (AES-256-GCM) ----
@@ -403,14 +411,14 @@ Table stego_documents {
   //       These fields encrypt content hidden inside carrier images (stegoLock);
   //       documents.enc_* encrypts the physical file stored on disk.
   //       Merging would conflate file-at-rest encryption with steganographic encryption.
-  ciphertext text [not null]              // hex-encoded encrypted content
+  ciphertext text              // hex-encoded encrypted content (nullable for pending status)
   // NOTE: stego_ prefix distinguishes these AES-GCM fields from documents.enc_* fields.
   //       Both are AES-256-GCM but encrypt different things: these hide content inside
   //       a carrier image (stegoLock); documents.enc_* encrypts the file on disk.
-  stego_iv varchar(64) [not null]          // hex-encoded GCM IV (12 bytes → 24 hex)
-  stego_auth_tag varchar(64) [not null]    // hex-encoded GCM auth tag (16 bytes → 32 hex)
-  stego_hash_sha256 varchar(64) [not null] // SHA-256 of original plaintext
-  stego_dek_salt varchar(64)               // hex-encoded DEK derivation salt
+  stego_iv varchar(64)          // hex-encoded GCM IV (12 bytes → 24 hex) (nullable for pending status)
+  stego_auth_tag varchar(64)    // hex-encoded GCM auth tag (16 bytes → 32 hex) (nullable for pending status)
+  stego_hash_sha256 varchar(64) // SHA-256 of original plaintext (nullable for pending status)
+  stego_dek_salt varchar(64)    // hex-encoded DEK derivation salt
   stego_dek_iter int [default: 10000]      // PBKDF2 iteration count
   s3_key varchar
   // FIX: s3_url dropped — transitive dependency on s3_key (3NF violation).
@@ -421,6 +429,7 @@ Table stego_documents {
   indexes {
     (document_id)
     (user_id)
+    (status) [name: 'stego_documents_status_index']
   }
 }
 
@@ -439,5 +448,20 @@ Table stego_segments {
   indexes {
     (stego_document_id, segment_index)
     (stego_carrier_id)
+  }
+}
+
+Table stego_document_grants {
+  id bigint [pk, increment]
+  stego_document_id bigint [not null, ref: > stego_documents.id]
+  viewer_user_id bigint [not null, ref: > users.id]
+  granted_by bigint [not null, ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (stego_document_id, viewer_user_id) [unique]
+    (viewer_user_id) [name: 'stego_grants_viewer_index']
+    (granted_by) [name: 'stego_grants_grantor_index']
   }
 }

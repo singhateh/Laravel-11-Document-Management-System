@@ -4,11 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\Folder;
 use App\Models\Document;
+use App\Models\StegoDocument;
 use Illuminate\Http\Request;
 use App\Models\ShareDocument;
 use App\Http\Requests\StoreShareDocumentRequest;
 use App\Http\Requests\UpdateShareDocumentRequest;
 use App\Models\User;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Auth;
+use Inertia\Inertia;
 
 class ShareDocumentController extends Controller
 {
@@ -19,6 +23,14 @@ class ShareDocumentController extends Controller
 
         abort_if(!$shareDocument, 404, 'Not Found');
 
+        if ($slug === 'folder') {
+            $folder = Folder::with(['documents', 'subfolders'])->findOrFail($sharedid);
+            return Inertia::render('Shares/Folder', [
+                'share' => $shareDocument,
+                'folder' => $folder
+            ]);
+        }
+
         return view('shares.index', compact('shareDocument'));
     }
 
@@ -27,21 +39,94 @@ class ShareDocumentController extends Controller
     {
         $validated = $request->validate([
             'shared_id'    => 'required',
-            'token'        => 'required',
-            'slug'         => 'required',
-            'name'         => 'nullable',
-            'valid_until'  => 'nullable',
-            'visibility'   => 'nullable',
+            'token'        => 'nullable|string|unique:share_documents',
+            'slug'         => 'required|in:document,folder,stego',
+            'name'         => 'required|string',
+            'valid_until'  => 'nullable|date|after:now',
+            'visibility'   => 'nullable|in:public,private',
+            'permission_level' => 'nullable|in:viewer,commenter,editor,co_owner,owner',
+            'can_download' => 'nullable|boolean',
+            'can_upload'   => 'nullable|boolean',
+            'can_edit'     => 'nullable|boolean',
+            'can_comment'  => 'nullable|boolean',
+            'can_share'    => 'nullable|boolean',
         ]);
 
-        ShareDocument::create($validated +
-            [
-                'share_type' => $request->slug == 'folder' ?  Folder::class : Document::class,
-                'share_id' => $request->shared_id,
-                'user_type' => User::class,
-                'user_id' => 1,
-            ]);
+        // Generate secure token if not provided
+        if (!isset($validated['token'])) {
+            $validated['token'] = Str::random(40);
+        }
+        
+        // Determine share type based on slug
+        $shareType = match($request->slug) {
+            'folder' => Folder::class,
+            'stego' => StegoDocument::class,
+            default => Document::class,
+        };
+        
+        $shareData = $validated + [
+            'share_type' => $shareType,
+            'share_id' => $request->shared_id,
+            'user_type' => User::class,
+            'user_id' => Auth::id() ?? 1,
+        ];
 
-        return response()->json(['message' => 'shared successfully'], 200);
+        $shareDocument = ShareDocument::create($shareData);
+
+        // If permission level is specified, set it
+        if (isset($validated['permission_level'])) {
+            $shareDocument->setPermissionLevel($validated['permission_level']);
+            $shareDocument->save();
+        }
+
+        return response()->json(['message' => 'shared successfully', 'share' => $shareDocument], 200);
+    }
+
+    function updatePermissions(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'permission_level' => 'required|in:viewer,commenter,editor,co_owner,owner',
+        ]);
+
+        $shareDocument = ShareDocument::findOrFail($id);
+        
+        // Check if user has permission to update
+        $this->authorize('update', $shareDocument);
+
+        $shareDocument->setPermissionLevel($validated['permission_level']);
+        $shareDocument->save();
+
+        return response()->json(['message' => 'Permissions updated successfully', 'share' => $shareDocument], 200);
+    }
+
+    function getSharePermissions($id)
+    {
+        $shareDocument = ShareDocument::findOrFail($id);
+        
+        return response()->json([
+            'permissions' => $shareDocument->getAttributes(),
+            'permission_levels' => ShareDocument::getPermissionLevels(),
+        ], 200);
+    }
+
+    function revokeShare($id)
+    {
+        $shareDocument = ShareDocument::findOrFail($id);
+        
+        // Check if user has permission to revoke
+        $this->authorize('delete', $shareDocument);
+
+        $shareDocument->delete();
+
+        return response()->json(['message' => 'Share revoked successfully'], 200);
+    }
+
+    function listSharedDocuments()
+    {
+        $user = Auth::user();
+        
+        $sharedDocuments = ShareDocument::where('user_id', $user->id)->get();
+
+        return response()->json(['shared_documents' => $sharedDocuments], 200);
     }
 }

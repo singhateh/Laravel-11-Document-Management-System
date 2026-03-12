@@ -23,6 +23,7 @@ import sys
 import json
 import base64
 import os
+import tempfile
 
 
 def _ok(data) -> None:
@@ -31,6 +32,25 @@ def _ok(data) -> None:
 
 def _err(message: str) -> None:
     print(json.dumps({"success": False, "error": message}), flush=True)
+
+
+def _prepare_rgb_carrier(carrier_path: str):
+    """
+    Ensure the carrier is RGB to avoid interactive conversion prompts in stegano.
+
+    Returns a tuple of:
+      (path_to_use_for_embedding, temp_file_to_cleanup_or_none)
+    """
+    from PIL import Image
+
+    with Image.open(carrier_path) as img:
+        if img.mode == "RGB":
+            return carrier_path, None
+
+        rgb_image = img.convert("RGB")
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            rgb_image.save(tmp.name, format="PNG")
+            return tmp.name, tmp.name
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +70,7 @@ def cmd_embed(carrier_path: str, payload_path: str, output_path: str) -> None:
     """
     try:
         from stegano import lsb
+        temp_carrier_path = None
 
         if not os.path.isfile(carrier_path):
             _err(f"Carrier file not found: {carrier_path}")
@@ -70,8 +91,12 @@ def cmd_embed(carrier_path: str, payload_path: str, output_path: str) -> None:
             _err("Payload is not valid base64")
             return
 
+        # Force RGB before embedding to prevent stegano from asking interactive
+        # conversion questions on palette/other non-RGB modes.
+        prepared_carrier_path, temp_carrier_path = _prepare_rgb_carrier(carrier_path)
+
         # stegano.lsb.hide() expects a string message
-        secret_image = lsb.hide(carrier_path, b64_payload)
+        secret_image = lsb.hide(prepared_carrier_path, b64_payload)
 
         # Ensure the output directory exists
         out_dir = os.path.dirname(output_path)
@@ -84,6 +109,12 @@ def cmd_embed(carrier_path: str, payload_path: str, output_path: str) -> None:
 
     except Exception as exc:
         _err(str(exc))
+    finally:
+        if temp_carrier_path and os.path.exists(temp_carrier_path):
+            try:
+                os.remove(temp_carrier_path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

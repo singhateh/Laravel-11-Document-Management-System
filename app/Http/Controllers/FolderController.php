@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use App\Http\Requests\StoreFolderRequest;
 use App\Services\FolderService;
 use Inertia\Inertia;
+use Illuminate\Support\Facades\Auth;
 
 class FolderController extends Controller
 {
@@ -19,8 +20,37 @@ class FolderController extends Controller
 
     public function index()
     {
+        $user = Auth::user();
+        
+        // Get all folders the user has permission to view
         $folders = Folder::with(['categories', 'subfolders.categories', 'subfolders.subfolders'])
             ->whereNull('parent_id')
+            ->where(function ($query) use ($user) {
+                // Check if user is admin - can view all folders
+                if ($user->isAdmin()) {
+                    return;
+                }
+                
+                // Check if folder is public or user has access to it
+                $query->where(function ($q) use ($user) {
+                    $q->where('visibility', 'public')
+                        ->orWhere(function ($subq) use ($user) {
+                            // Check if user has documents in this folder
+                            $subq->whereHas('documents', function ($docQuery) use ($user) {
+                                $docQuery->where('owner_id', $user->id);
+                            });
+                        })
+                        ->orWhere(function ($subq) use ($user) {
+                            // Check if folder is shared with user
+                            $subq->whereIn('id', function ($shareQuery) use ($user) {
+                                $shareQuery->select('share_id')
+                                    ->from('share_documents')
+                                    ->where('user_id', $user->id)
+                                    ->where('slug', 'folder');
+                            });
+                        });
+                });
+            })
             ->orderBy('position')
             ->get();
 

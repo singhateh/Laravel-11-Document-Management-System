@@ -128,10 +128,25 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         ->whereNumber('id');
     Route::get('/documents',      [ApiDocumentController::class, 'index'])->name('api.documents.index');
 
-    // Dashboard stats / recent (for SPA)
-    Route::prefix('dashboard')->group(function () {
-        Route::get('/stats',  [DashboardController::class, 'stats']);
-        Route::get('/recent', [DashboardController::class, 'recent']);
-    });
+     // Dashboard stats / recent (for SPA)
+     Route::prefix('dashboard')->group(function () {
+         Route::get('/stats',  [DashboardController::class, 'stats']);
+         Route::get('/recent', [DashboardController::class, 'recent']);
+     });
 
-});
+     // Collaboration and sharing endpoints
+     Route::prefix('collaboration')->name('api.collaboration.')->group(function () {
+         // Share management
+         Route::post('/shares', [\App\Http\Controllers\ShareDocumentController::class, 'sharedDocuments'])
+             ->name('shares.create');
+         Route::put('/shares/{id}/permissions', [\App\Http\Controllers\ShareDocumentController::class, 'updatePermissions'])
+             ->name('shares.permissions.update');
+         Route::get('/shares/{id}/permissions', [\App\Http\Controllers\ShareDocumentController::class, 'getSharePermissions'])
+             ->name('shares.permissions.get');
+         Route::delete('/shares/{id}', [\App\Http\Controllers\ShareDocumentController::class, 'revokeShare'])
+             ->name('shares.revoke');
+         Route::get('/shares', [\App\Http\Controllers\ShareDocumentController::class, 'listSharedDocuments'])
+             ->name('shares.list');
+     });
+
+ });
