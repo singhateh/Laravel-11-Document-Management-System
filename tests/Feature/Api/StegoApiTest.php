@@ -106,12 +106,16 @@ class StegoApiTest extends TestCase
     {
         Storage::fake('local');
 
-        // Create a fake document file in local storage.
+        // Create a fake document file in public directory.
         $document = \App\Models\Document::factory()->create([
             'owner_id'  => $this->user->id,
-            'file_path' => 'documents/test.txt',
         ]);
-        Storage::disk('local')->put('documents/test.txt', 'plaintext payload');
+        $publicPath = public_path($document->file_path);
+        $dir = dirname($publicPath);
+        if (!file_exists($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        file_put_contents($publicPath, 'plaintext payload');
 
         // Stub out the StegoDocumentService so no Python/S3 is needed.
         $fakeStegoDoc = StegoDocument::factory()->create([
@@ -140,14 +144,10 @@ class StegoApiTest extends TestCase
                 ],
             ]);
 
-        $response->assertStatus(201)
+        $response->assertStatus(202)
             ->assertJsonStructure([
+                'message',
                 'stego_document_id',
-                'document_id',
-                'document_name',
-                'segments_count',
-                'quality_metrics' => [['carrier', 'psnr', 'threshold_40db']],
-                'created_at',
             ]);
     }
 
@@ -156,7 +156,7 @@ class StegoApiTest extends TestCase
     // -------------------------------------------------------------------------
 
     #[Test]
-    public function decode_streams_file_download_on_success(): void
+    public function decode_returns_202_accepted_on_success(): void
     {
         $stegoDoc = StegoDocument::factory()
             ->has(\App\Models\Document::factory()->state(['owner_id' => $this->user->id]), 'document')
@@ -173,8 +173,11 @@ class StegoApiTest extends TestCase
             ->withSession(['stego_mkd' => str_repeat('a', 64)])
             ->postJson('/api/stego/decode', ['stego_document_id' => $stegoDoc->id]);
 
-        $response->assertOk()
-            ->assertHeader('Content-Disposition');
+        $response->assertStatus(202)
+            ->assertJsonStructure([
+                'message',
+                'stego_document_id',
+            ]);
     }
 
     // -------------------------------------------------------------------------
@@ -361,8 +364,11 @@ class StegoApiTest extends TestCase
         $this->actingAs($this->user, 'sanctum')
             ->withSession(['stego_mkd' => str_repeat('a', 64)])
             ->postJson('/api/stego/decode', ['stego_document_id' => $stegoDoc->id])
-            ->assertOk()
-            ->assertHeader('Content-Disposition');
+            ->assertStatus(202)
+            ->assertJsonStructure([
+                'message',
+                'stego_document_id',
+            ]);
     }
 }
 

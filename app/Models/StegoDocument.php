@@ -23,6 +23,9 @@ class StegoDocument extends Model
         's3_key',
         'status',
         'failed_reason',
+        'decoding_status',
+        'decoding_error',
+        'download_path',
     ];
 
     protected $casts = [
@@ -40,7 +43,7 @@ class StegoDocument extends Model
     public function getS3UrlAttribute(): ?string
     {
         return $this->s3_key
-            ? Storage::disk('s3')->url($this->s3_key)
+            ? Storage::disk('local')->path($this->s3_key)
             : null;
     }
 

@@ -82,8 +82,12 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         // Encode a document (multipart form-data) — returns JSON { stego_document_id, quality_metrics }
         Route::post('/encode', [StegoDocumentController::class, 'encode'])->name('encode');
 
-        // Decode — extracts and decrypts, returns file download (owner OR granted viewer)
+        // Decode — queues a decode operation (owner OR granted viewer)
         Route::post('/decode', [StegoDocumentController::class, 'decode'])->name('decode');
+        
+        // Download decoded document (owner OR granted viewer)
+        Route::get('/decode/{id}', [StegoDocumentController::class, 'downloadDecoded'])->name('decode.download')
+            ->whereNumber('id');
 
         // Grant viewer-decode access to another user (owner only)
         Route::post('/documents/{id}/grant',                      [StegoDocumentController::class, 'grant'])
@@ -129,10 +133,13 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
     Route::get('/documents',      [ApiDocumentController::class, 'index'])->name('api.documents.index');
 
      // Dashboard stats / recent (for SPA)
-     Route::prefix('dashboard')->group(function () {
-         Route::get('/stats',  [DashboardController::class, 'stats']);
-         Route::get('/recent', [DashboardController::class, 'recent']);
-     });
+      Route::prefix('dashboard')->group(function () {
+          Route::get('/stats',  [DashboardController::class, 'stats']);
+          Route::get('/recent', [DashboardController::class, 'recent']);
+      });
+
+      // User search endpoint
+      Route::get('/users', [\App\Http\Controllers\UserController::class, 'search'])->name('api.users.search');
 
      // Collaboration and sharing endpoints
      Route::prefix('collaboration')->name('api.collaboration.')->group(function () {

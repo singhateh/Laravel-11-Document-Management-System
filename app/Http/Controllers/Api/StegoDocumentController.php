@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Concerns\HasStegoEncoding;
 use App\Jobs\EncodeStegoDocumentJob;
+use App\Jobs\DecodeStegoDocumentJob;
 use App\Models\Document;
 use App\Models\StegoDocument;
 use App\Models\StegoDocumentGrant;
@@ -15,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -181,8 +183,7 @@ class StegoDocumentController extends Controller
     // -------------------------------------------------------------------------
 
     /**
-     * Extract + decrypt a previously encoded StegoDocument and return the
-     * original file as a download.
+     * Queue a decode operation for a previously encoded StegoDocument.
      *
      * Authorization: the authenticated user must be either the **owner**
      * (stego_documents.user_id) OR appear as a viewer in stego_document_grants.
@@ -190,9 +191,9 @@ class StegoDocumentController extends Controller
      * Reads the Master Key from the server-side session (populated at login via MKD).
      *
      * @param  Request $request  { stego_document_id: int }
-     * @return StreamedResponse|JsonResponse
+     * @return JsonResponse
      */
-    public function decode(Request $request): StreamedResponse|JsonResponse
+    public function decode(Request $request): JsonResponse
     {
         // Master Key must be present before we bother validating the payload.
         $masterKey = $this->resolveSessionKey();
@@ -219,17 +220,67 @@ class StegoDocumentController extends Controller
             ->with('document')
             ->firstOrFail();
 
-        // The decode pipeline always works with the owner's user_id so that the
-        // DEK can be re-derived correctly. The owner's id is stored on the record.
-        try {
-            $plaintext = $this->stegoService->decode(
-                $request->stego_document_id,
-                $masterKey,
-                $stegoDoc->user_id   // always the owner's id, not the viewer's
-            );
-        } catch (\Exception $e) {
-            return response()->json(['message' => 'Decoding failed: ' . $e->getMessage()], 422);
+        // Update stego document status to indicate decoding is pending
+        $stegoDoc->update([
+            'decoding_status' => 'pending',
+            'decoding_error' => null,
+            'download_path' => null,
+        ]);
+
+        // Queue the decode operation
+        DecodeStegoDocumentJob::dispatch(
+            $user->id,
+            $stegoDoc->id,
+            $masterKey
+        );
+
+        return response()->json([
+            'message' => 'Decoding queued. Check the stego document status to track progress.',
+            'stego_document_id' => $stegoDoc->id,
+        ], 202);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/stego/decode/{id}
+    // -------------------------------------------------------------------------
+
+    /**
+     * Download the decoded document if decoding is complete.
+     *
+     * @param  int $id StegoDocument id
+     * @return StreamedResponse|JsonResponse
+     */
+    public function downloadDecoded(int $id): StreamedResponse|JsonResponse
+    {
+        $user = Auth::user();
+
+        // Authorization: owner OR granted viewer.
+        $stegoDoc = StegoDocument::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('viewerGrants', fn ($g) =>
+                      $g->where('viewer_user_id', $user->id)
+                  );
+            })
+            ->where('id', $id)
+            ->with('document')
+            ->firstOrFail();
+
+        if ($stegoDoc->decoding_status !== 'completed' || empty($stegoDoc->download_path)) {
+            return response()->json([
+                'message' => 'Decoding not completed yet. Please check again later.',
+                'status' => $stegoDoc->decoding_status,
+            ], 404);
         }
+
+        // Check if the file exists
+        if (!Storage::exists($stegoDoc->download_path)) {
+            return response()->json([
+                'message' => 'Decoded file not found. Please re-queue the decode operation.',
+            ], 404);
+        }
+
+        // Read the decoded file
+        $plaintext = Storage::get($stegoDoc->download_path);
 
         $filename = $this->buildDecodeFilename($stegoDoc);
 

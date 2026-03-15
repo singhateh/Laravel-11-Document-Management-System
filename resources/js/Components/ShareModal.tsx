@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Modal from '@/Components/Modal';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
@@ -18,6 +18,12 @@ interface PermissionLevel {
   value: string;
   label: string;
   description: string;
+}
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
 }
 
 const permissionLevels: PermissionLevel[] = [
@@ -57,11 +63,54 @@ export default function ShareModal({
   const [isLoading, setIsLoading] = useState(false);
   const [shareLink, setShareLink] = useState('');
   const [showLink, setShowLink] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Search for users
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const searchUsers = async () => {
+      setIsSearching(true);
+      try {
+        const response = await axios.get(`/api/users?search=${encodeURIComponent(searchQuery)}`);
+        setSearchResults(response.data);
+      } catch (error) {
+        console.error('Failed to search users:', error);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchUsers, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [searchQuery]);
+
+  // Add user to selected users
+  const handleAddUser = (user: User) => {
+    if (!selectedUsers.find(u => u.id === user.id)) {
+      setSelectedUsers([...selectedUsers, user]);
+      setSearchQuery('');
+      setSearchResults([]);
+    }
+  };
+
+  // Remove user from selected users
+  const handleRemoveUser = (userId: number) => {
+    setSelectedUsers(selectedUsers.filter(u => u.id !== userId));
+  };
 
   const handleShare = async () => {
     setIsLoading(true);
     
     try {
+      // Create share link
       const response = await axios.post('/api/collaboration/shares', {
         shared_id: documentId,
         slug: slug,
@@ -75,6 +124,25 @@ export default function ShareModal({
       const link = `${window.location.origin}/shares/${slug}/${documentId}/${share.token}`;
       setShareLink(link);
       setShowLink(true);
+
+      // Share with selected users
+      if (selectedUsers.length > 0) {
+        for (const user of selectedUsers) {
+          try {
+            await axios.post('/api/collaboration/shares', {
+              shared_id: documentId,
+              slug: slug,
+              name: documentName,
+              valid_until: expirationDate || null,
+              visibility: 'private',
+              permission_level: permissionLevel,
+              user_id: user.id,
+            });
+          } catch (error) {
+            console.error(`Failed to share with user ${user.id}:`, error);
+          }
+        }
+      }
 
       if (onSuccess) {
         onSuccess();
@@ -103,6 +171,9 @@ export default function ShareModal({
     setPermissionLevel('viewer');
     setExpirationDate('');
     setIsPublic(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setSelectedUsers([]);
     onClose();
   };
 
@@ -158,6 +229,79 @@ export default function ShareModal({
                 className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                 min={new Date().toISOString().split('T')[0]}
               />
+            </div>
+
+            {/* Search and select users */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Share with specific users (optional)
+              </label>
+              
+              {/* Search bar */}
+              <div className="mb-3">
+                <input
+                  type="text"
+                  placeholder="Search for users by name or email..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                />
+                {isSearching && (
+                  <div className="mt-2 text-sm text-gray-500">Searching...</div>
+                )}
+              </div>
+
+              {/* Search results */}
+              {searchResults.length > 0 && (
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">Search Results</h4>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {searchResults.map((user) => (
+                      <div
+                        key={user.id}
+                        className="flex items-center justify-between p-2 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer"
+                        onClick={() => handleAddUser(user)}
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">{user.name}</div>
+                          <div className="text-xs text-gray-500">{user.email}</div>
+                        </div>
+                        <button
+                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Selected users */}
+              {selectedUsers.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">Selected Users</h4>
+                  <div className="space-y-2">
+                    {selectedUsers.map((user) => (
+                      <div
+                        key={user.id}
+                        className="flex items-center justify-between p-2 rounded-lg border border-gray-200 bg-gray-50"
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">{user.name}</div>
+                          <div className="text-xs text-gray-500">{user.email}</div>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveUser(user.id)}
+                          className="text-red-600 hover:text-red-800 text-sm font-medium"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center">

@@ -177,8 +177,10 @@ class SegmentationService
      * Calculate the optimal number of segments given available carrier files
      * and the size of the data to hide.
      *
-     * Returns the minimum of: number of carriers available, and the number
-     * of carriers whose combined byte-capacity exceeds the data size.
+     * The optimal number of segments is determined by:
+     * 1. The maximum number of segments that can be created with 2MB chunks
+     * 2. The number of carriers available
+     * 3. The capacity of each carrier (each segment must fit into a carrier)
      *
      * @param  int   $dataLength      Length of data in bytes
      * @param  int[] $carrierCapacities Capacity of each carrier in bytes
@@ -202,10 +204,68 @@ class SegmentationService
             );
         }
 
-        // Use as many carriers as there are, up to the data length.
-        $minChunkSize = 1; // at least 1 byte per segment
-        $maxSegments  = min($numCarriers, $dataLength);
-
-        return max(1, $maxSegments);
+        $chunkSize = 2 * 1024 * 1024; // 2 MB per chunk (matches split() method)
+        
+        // Calculate minimum number of segments needed with 2MB chunks
+        $minSegments = (int) ceil($dataLength / $chunkSize);
+        
+        // Find maximum number of segments possible with available carrier capacities
+        $maxPossibleSegments = 0;
+        $availableCapacity = 0;
+        
+        // Sort carrier capacities in ascending order to find optimal segment count
+        $sortedCapacities = $carrierCapacities;
+        sort($sortedCapacities);
+        
+        foreach ($sortedCapacities as $capacity) {
+            if ($availableCapacity + $capacity >= $dataLength) {
+                $maxPossibleSegments++;
+                break;
+            }
+            
+            if ($capacity >= $chunkSize) {
+                $availableCapacity += $capacity;
+                $maxPossibleSegments++;
+            }
+        }
+        
+        // If we couldn't find enough carriers with at least chunkSize capacity,
+        // use all carriers
+        if ($maxPossibleSegments === 0) {
+            $maxPossibleSegments = $numCarriers;
+        }
+        
+        // Determine optimal segment count by finding the smallest number of segments
+        // that meets both:
+        // 1. At least minSegments (to ensure chunks are <= 2MB)
+        // 2. At most numCarriers (can't use more carriers than available)
+        $optimalSegments = $minSegments;
+        
+        while ($optimalSegments <= $numCarriers) {
+            // Check if this number of segments is feasible with the available carriers
+            $requiredChunkSize = (int) ceil($dataLength / $optimalSegments);
+            $feasible = true;
+            
+            // We need at least $optimalSegments carriers with capacity >= $requiredChunkSize
+            $usableCarriers = 0;
+            foreach ($carrierCapacities as $capacity) {
+                if ($capacity >= $requiredChunkSize) {
+                    $usableCarriers++;
+                }
+                
+                if ($usableCarriers >= $optimalSegments) {
+                    break;
+                }
+            }
+            
+            if ($usableCarriers >= $optimalSegments) {
+                return $optimalSegments;
+            }
+            
+            $optimalSegments++;
+        }
+        
+        // If no feasible segment count found (shouldn't happen due to earlier checks)
+        return $numCarriers;
     }
 }

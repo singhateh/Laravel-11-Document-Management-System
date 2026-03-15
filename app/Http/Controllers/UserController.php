@@ -12,7 +12,7 @@ class UserController extends Controller
 
     public function search(Request $request)
     {
-        $query = $request->input('q');
+        $query = $request->input('search', $request->input('q'));
 
         // Perform a database query to search for users by username or name
         $users = User::where('email', 'like', "%$query%")
@@ -24,7 +24,7 @@ class UserController extends Controller
         foreach ($users as $key => $value) {
             $userList[] = ['name' => Str::studly($value->name), 'email' => $value->email, 'id' => $value->id];
         }
-        return response()->json(['users' => $userList]);
+        return response()->json($userList);
     }
 
   

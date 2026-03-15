@@ -256,4 +256,65 @@ class SegmentationServiceTest extends TestCase
 
         $this->svc->split($base64, $capacities);
     }
+
+    // -------------------------------------------------------------------------
+    // recommendedSegmentCount()
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function recommended_segment_count_single_small_chunk(): void
+    {
+        // 1MB data, 2MB carrier capacity
+        $this->assertSame(1, $this->svc->recommendedSegmentCount(1024 * 1024, [2 * 1024 * 1024]));
+    }
+
+    #[Test]
+    public function recommended_segment_count_single_chunk_just_under_limit(): void
+    {
+        // 2MB - 1 byte data, 2MB carrier capacity
+        $this->assertSame(1, $this->svc->recommendedSegmentCount(2 * 1024 * 1024 - 1, [2 * 1024 * 1024]));
+    }
+
+    #[Test]
+    public function recommended_segment_count_single_chunk_exact_limit(): void
+    {
+        // Exactly 2MB data, 2MB carrier capacity
+        $this->assertSame(1, $this->svc->recommendedSegmentCount(2 * 1024 * 1024, [2 * 1024 * 1024]));
+    }
+
+    #[Test]
+    public function recommended_segment_count_multiple_chunks(): void
+    {
+        // 5MB data, 3 carriers each with 2MB capacity
+        $this->assertSame(3, $this->svc->recommendedSegmentCount(5 * 1024 * 1024, [2 * 1024 * 1024, 2 * 1024 * 1024, 2 * 1024 * 1024]));
+    }
+
+    #[Test]
+    public function recommended_segment_count_uneven_carrier_capacities(): void
+    {
+        // 4MB data, carriers with varying capacities
+        $this->assertSame(3, $this->svc->recommendedSegmentCount(4 * 1024 * 1024, [1.5 * 1024 * 1024, 2.5 * 1024 * 1024, 1 * 1024 * 1024]));
+    }
+
+    #[Test]
+    public function recommended_segment_count_insufficient_combined_capacity(): void
+    {
+        $this->expectException(\Exception::class);
+        // 5MB data, only 3MB total capacity
+        $this->svc->recommendedSegmentCount(5 * 1024 * 1024, [1 * 1024 * 1024, 2 * 1024 * 1024]);
+    }
+
+    #[Test]
+    public function recommended_segment_count_no_carriers(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->svc->recommendedSegmentCount(1000, []);
+    }
+
+    #[Test]
+    public function recommended_segment_count_large_number_of_small_carriers(): void
+    {
+        // 3MB data, 4 carriers each with 1MB capacity
+        $this->assertSame(3, $this->svc->recommendedSegmentCount(3 * 1024 * 1024, [1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024]));
+    }
 }
