@@ -119,7 +119,7 @@ export default function Encode() {
                     {step === 2 && (
                         <div>
                             <h2 className="mb-1 font-semibold text-gray-800">Upload carrier images (PNG / BMP / JPEG)</h2>
-                            <p className="mb-4 text-sm text-gray-500">Data is distributed across all carriers using LSB steganography. Each carrier must meet PSNR â‰¥ 40 dB.</p>
+                            <p className="mb-4 text-sm text-gray-500">Data is dynamically distributed across all carriers using LSB steganography for optimal PSNR. Each carrier must meet PSNR â‰¥ 40 dB.</p>
 
                             {/* Encoding summary */}
                             <div className="mb-4 rounded-lg bg-gray-50 p-3 text-sm">

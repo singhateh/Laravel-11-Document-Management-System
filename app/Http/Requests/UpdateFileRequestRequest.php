@@ -11,7 +11,7 @@ class UpdateFileRequestRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -22,7 +22,12 @@ class UpdateFileRequestRequest extends FormRequest
     public function rules(): array
     {
         return [
-            //
+            'name' => ['sometimes', 'string', 'max:255'],
+            'request_to' => ['nullable', 'string', 'max:255'],
+            'folder_id' => ['nullable', 'exists:folders,id'],
+            'tag_id' => ['nullable', 'exists:tags,id'],
+            'due_date_in_number' => ['nullable', 'integer', 'min:0'],
+            'note' => ['nullable', 'string'],
         ];
     }
 }

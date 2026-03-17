@@ -17,7 +17,7 @@ use Inertia\Inertia;
 class ShareDocumentController extends Controller
 {
 
-    function getSharedDocuments($slug, $sharedid, $token)
+    public function getSharedDocuments($slug, $sharedid, $token)
     {
         $shareDocument = ShareDocument::whereSlug($slug)->whereToken($token)->whereSharedId($sharedid)->first();
 
@@ -35,22 +35,9 @@ class ShareDocumentController extends Controller
     }
 
 
-    function sharedDocuments(Request $request)
+    public function sharedDocuments(StoreShareDocumentRequest $request)
     {
-        $validated = $request->validate([
-            'shared_id'    => 'required',
-            'token'        => 'nullable|string|unique:share_documents',
-            'slug'         => 'required|in:document,folder,stego',
-            'name'         => 'required|string',
-            'valid_until'  => 'nullable|date|after:now',
-            'visibility'   => 'nullable|in:public,private',
-            'permission_level' => 'nullable|in:viewer,commenter,editor,co_owner,owner',
-            'can_download' => 'nullable|boolean',
-            'can_upload'   => 'nullable|boolean',
-            'can_edit'     => 'nullable|boolean',
-            'can_comment'  => 'nullable|boolean',
-            'can_share'    => 'nullable|boolean',
-        ]);
+        $validated = $request->validated();
 
         // Generate secure token if not provided
         if (!isset($validated['token'])) {
@@ -82,11 +69,9 @@ class ShareDocumentController extends Controller
         return response()->json(['message' => 'shared successfully', 'share' => $shareDocument], 200);
     }
 
-    function updatePermissions(Request $request, $id)
+    public function updatePermissions(UpdateShareDocumentRequest $request, $id)
     {
-        $validated = $request->validate([
-            'permission_level' => 'required|in:viewer,commenter,editor,co_owner,owner',
-        ]);
+        $validated = $request->validated();
 
         $shareDocument = ShareDocument::findOrFail($id);
         
@@ -99,7 +84,7 @@ class ShareDocumentController extends Controller
         return response()->json(['message' => 'Permissions updated successfully', 'share' => $shareDocument], 200);
     }
 
-    function getSharePermissions($id)
+    public function getSharePermissions($id)
     {
         $shareDocument = ShareDocument::findOrFail($id);
         
@@ -109,7 +94,7 @@ class ShareDocumentController extends Controller
         ], 200);
     }
 
-    function revokeShare($id)
+    public function revokeShare($id)
     {
         $shareDocument = ShareDocument::findOrFail($id);
         
@@ -121,7 +106,7 @@ class ShareDocumentController extends Controller
         return response()->json(['message' => 'Share revoked successfully'], 200);
     }
 
-    function listSharedDocuments()
+    public function listSharedDocuments()
     {
         $user = Auth::user();
         

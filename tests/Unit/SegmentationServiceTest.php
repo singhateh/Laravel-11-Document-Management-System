@@ -234,7 +234,7 @@ class SegmentationServiceTest extends TestCase
     public function split_throws_when_not_enough_carriers(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/carrier image/i');
+        $this->expectExceptionMessageMatches('/Total carrier capacity.*insufficient/i');
 
         $raw        = str_repeat('d', 5 * 1024 * 1024);   // needs 3 carriers
         $base64     = base64_encode($raw);
@@ -247,11 +247,11 @@ class SegmentationServiceTest extends TestCase
     public function split_throws_when_carrier_is_too_small_for_its_chunk(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/too small/i');
+        $this->expectExceptionMessageMatches('/Total carrier capacity.*insufficient/i');
 
         $raw        = str_repeat('e', 3 * 1024 * 1024);
         $base64     = base64_encode($raw);
-        // Two carriers but the first is tiny and cannot hold a 2 MB chunk.
+        // Two carriers but total capacity (2MB + 512 bytes) is less than 3MB
         $capacities = [512, 2 * 1024 * 1024];
 
         $this->svc->split($base64, $capacities);
@@ -314,7 +314,7 @@ class SegmentationServiceTest extends TestCase
     #[Test]
     public function recommended_segment_count_large_number_of_small_carriers(): void
     {
-        // 3MB data, 4 carriers each with 1MB capacity
-        $this->assertSame(3, $this->svc->recommendedSegmentCount(3 * 1024 * 1024, [1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024]));
+        // 3MB data, 4 carriers each with 1MB capacity (our new logic uses all available carriers)
+        $this->assertSame(4, $this->svc->recommendedSegmentCount(3 * 1024 * 1024, [1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024]));
     }
 }

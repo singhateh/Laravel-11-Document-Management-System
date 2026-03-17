@@ -84,6 +84,11 @@ class FolderController extends Controller
 
     public function updateFolderPositions(Request $request)
     {
+        $request->validate([
+            'positions' => ['required', 'array', 'min:1'],
+            'positions.*' => ['integer', 'min:0'],
+        ]);
+
         $this->folderService->setUpdateFolderPositions($request);
 
         return response()->json(['message' => 'Positions updated successfully for parent rows']);
@@ -92,6 +97,12 @@ class FolderController extends Controller
 
     public function updateFolderChildPositions(Request $request)
     {
+        $request->validate([
+            'parent_id' => ['required', 'integer', 'exists:folders,id'],
+            'positions' => ['required', 'array', 'min:1'],
+            'positions.*' => ['integer', 'min:0'],
+        ]);
+
         $this->folderService->setUpdateFolderChildPositions($request);
 
         return response()->json(['message' => 'Positions updated successfully for child rows']);
@@ -120,23 +131,38 @@ class FolderController extends Controller
             'folders' => 'required|array',
         ]);
 
-        $zipFilePath = $this->folderService->setDownloadZip($request)['zipFilePath'];
-        $zipFileName = $this->folderService->setDownloadZip($request)['zipFileName'];
+        $zipResult = $this->folderService->setDownloadZip($request);
+
+        if (!$zipResult) {
+            return response()->json(['error' => 'Error generating zip file. The folder may be empty, and you cannot create a zip file from an empty folder.'], 400);
+        }
+
+        $zipFilePath = $zipResult['zipFilePath'];
+        $zipFileName = $zipResult['zipFileName'];
 
         if ($zipFilePath) {
             return response()->download($zipFilePath, $zipFileName)->deleteFileAfterSend(true);
-        } else {
-            return response()->json(['error' => 'Error generating zip file. The folder may be empty, and you cannot create a zip file from an empty folder.'], 400);
         }
+
+        return response()->json(['error' => 'Error generating zip file. The folder may be empty, and you cannot create a zip file from an empty folder.'], 400);
     }
 
 
-    function deleteSelecetdFolder(Request $request)
+    public function deleteSelecetdFolder(Request $request)
     {
-        // Retrieve folder instance
-        $folders = Folder::findOrFail($request->folder_ids);
+        return $this->deleteSelectedFolder($request);
+    }
 
-        foreach ($folders as $key => $folder) {
+    public function deleteSelectedFolder(Request $request)
+    {
+        $validated = $request->validate([
+            'folder_ids' => ['required', 'array', 'min:1'],
+            'folder_ids.*' => ['integer', 'exists:folders,id'],
+        ]);
+
+        $folders = Folder::whereIn('id', $validated['folder_ids'])->get();
+
+        foreach ($folders as $folder) {
             $folder->deleteFolder();
         }
 
@@ -148,7 +174,7 @@ class FolderController extends Controller
     }
 
 
-    function getParentFolders()
+    public function getParentFolders()
     {
         $folders = Folder::with(['categories'])->whereNull('parent_id')->get();
         

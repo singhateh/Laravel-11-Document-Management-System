@@ -88,10 +88,10 @@ class StegoWebController extends Controller
                 $carrierPaths,
                 $document->id
             );
-            $stegoDoc = $result['stego_document'];
+            $usedCarrierCount = count($result['quality_metrics'] ?? []);
 
             return redirect()->route('stego.index')
-                ->with('success', "Document encoded and hidden in " . count($carrierPaths) . " carrier(s).");
+                ->with('success', "Document encoded and hidden in {$usedCarrierCount} carrier(s).");
         } catch (\Exception $e) {
             return back()->withErrors(['encode' => 'Encoding failed: ' . $e->getMessage()]);
         } finally {

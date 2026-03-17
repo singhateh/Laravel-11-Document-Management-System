@@ -462,7 +462,7 @@ class StegoEncodeDecodeTest extends TestCase
     public function carrier_too_small_for_chunk_throws_runtime_exception_on_split(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/too small/i');
+        $this->expectExceptionMessageMatches('/Total carrier capacity.*insufficient/i');
 
         // 8×8 px PNG → capacity = (8×8×3)/8 − 4 = 20 bytes — cannot hold any real document.
         $tinyCarrier = $this->makeCarrier('tiny', 8, 8);
@@ -483,7 +483,7 @@ class StegoEncodeDecodeTest extends TestCase
     public function carrier_count_too_few_throws_runtime_exception_on_split(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessageMatches('/carrier image/i');
+        $this->expectExceptionMessageMatches('/Total carrier capacity.*insufficient/i');
 
         // Create an encrypted payload of 5 MB random bytes (incompressible)
         // so it splits into 3 chunks at the 2 MB boundary.

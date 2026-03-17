@@ -12,18 +12,32 @@ class UserController extends Controller
 
     public function search(Request $request)
     {
-        $query = $request->input('search', $request->input('q'));
+        $query = trim((string) $request->input('search', $request->input('q', '')));
 
-        // Perform a database query to search for users by username or name
-        $users = User::where('email', 'like', "%$query%")
-            ->orWhere('name', 'like', "%$query%")
+        $usersQuery = User::query();
+
+        if ($query !== '') {
+            $usersQuery->where(function ($q) use ($query) {
+                $q->where('email', 'like', "%{$query}%")
+                    ->orWhere('name', 'like', "%{$query}%");
+            });
+        }
+
+        $users = $usersQuery
+            ->orderBy('name')
             ->get();
 
         $userList = [];
 
         foreach ($users as $key => $value) {
-            $userList[] = ['name' => Str::studly($value->name), 'email' => $value->email, 'id' => $value->id];
+            $userList[] = [
+                'name'  => Str::studly($value->name),
+                'email' => $value->email,
+                'id'    => $value->id,
+                'role'  => $value->role,
+            ];
         }
+
         return response()->json($userList);
     }
 

@@ -31,18 +31,21 @@ type Step = 1 | 2;
 
 /**
  * Estimate how many carrier images a document requires after the
- * gzip + base64 encoding pipeline (compression ratio ≈ 0.4, chunk = 2 MB).
+ * gzip + base64 encoding pipeline (compression ratio ≈ 0.4).
+ *
+ * Note: Dynamic chunk sizing now distributes payload evenly across all carriers,
+ * so this is just a rough estimate. Actual requirements depend on carrier capacities.
  */
 const estimateCarriersNeeded = (fileSizeBytes: number): number => {
     const compressionRatio = 0.4;              // gzip typically ≈ 60% reduction
     const base64Overhead   = 4 / 3;            // base64 expands binary by 33%
-    const chunkSize        = 2 * 1024 * 1024;  // 2 MB per chunk
+    const avgChunkSize     = 1.5 * 1024 * 1024; // Average chunk size (1.5 MB) for estimate
     const estimatedSize    = fileSizeBytes * compressionRatio * base64Overhead;
-    return Math.max(1, Math.ceil(estimatedSize / chunkSize));
+    return Math.max(1, Math.ceil(estimatedSize / avgChunkSize));
 };
 
-/** Minimum square-image side length (px) needed to hide a 2 MB chunk via LSB. */
-const MIN_IMAGE_DIMENSION = Math.ceil(Math.sqrt((2 * 1024 * 1024 * 8) / 3)); // ≈ 1304 px
+/** Minimum square-image side length (px) needed to hide a 1.5 MB chunk via LSB (for estimation purposes). */
+const MIN_IMAGE_DIMENSION = Math.ceil(Math.sqrt((1.5 * 1024 * 1024 * 8) / 3)); // ≈ 1132 px
 
 /** Usable LSB capacity of a carrier image in bytes (mirrors python/stego_lsb.py). */
 const carrierCapacity = (w: number, h: number): number =>
@@ -365,6 +368,8 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                                         Each image must be at least{' '}
                                                         <strong>{MIN_IMAGE_DIMENSION}×{MIN_IMAGE_DIMENSION} px</strong>{' '}
                                                         (≈ {(MIN_IMAGE_DIMENSION / 1000 * MIN_IMAGE_DIMENSION / 1000 * 3 / 1024).toFixed(1)} MB image).
+                                                        <br />
+                                                        <span className="text-blue-600">Dynamic chunk sizing will distribute data evenly across all carriers for optimal PSNR.</span>
                                                     </p>
                                                 )}
                                             </div>
@@ -400,18 +405,18 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                     {carriers.length > 0 && (
                                         <ul className="mt-4 space-y-2">
                                             {carriers.map((c, i) => {
-                                                const perNeeded = carriers.length > 0 ? dataNeeded / carriers.length : 0;
+                                                // For dynamic chunk sizing, we can't determine exact per-carrier needs
+                                                // until all carriers are loaded and we know their capacities. So we
+                                                // just check if the carrier has any capacity for now.
                                                 const status =
                                                     c.loading             ? 'loading'
                                                     : c.capacity === undefined ? 'unknown'
-                                                    : c.capacity >= perNeeded * 1.2 ? 'ok'
-                                                    : c.capacity >= perNeeded       ? 'borderline'
+                                                    : c.capacity > 0       ? 'ok'
                                                     : 'small';
                                                 const badgeMap: Record<string, { icon: string; label: string; cls: string }> = {
                                                     loading:    { icon: '⏳', label: 'Checking…',  cls: 'text-gray-400'   },
                                                     unknown:    { icon: '❓', label: 'Unknown',     cls: 'text-gray-400'   },
                                                     ok:         { icon: '✅', label: 'OK',          cls: 'text-green-600'  },
-                                                    borderline: { icon: '⚠️', label: 'Borderline', cls: 'text-yellow-600' },
                                                     small:      { icon: '❌', label: 'Too small',   cls: 'text-red-600'    },
                                                 };
                                                 const b = badgeMap[status] ?? badgeMap['unknown'];

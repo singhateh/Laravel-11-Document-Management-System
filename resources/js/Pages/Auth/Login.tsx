@@ -14,7 +14,13 @@ export default function Login({
     status?: string;
     canResetPassword: boolean;
 }) {
+    const csrfToken =
+        document
+            .querySelector<HTMLMetaElement>('meta[name="csrf-token"]')
+            ?.getAttribute('content') ?? '';
+
     const { data, setData, post, processing, errors, reset } = useForm({
+        _token: csrfToken,
         email: '',
         password: '',
         remember: false as boolean,
@@ -39,6 +45,8 @@ export default function Login({
             )}
 
             <form onSubmit={submit}>
+                <input type="hidden" name="_token" value={data._token} />
+
                 <div>
                     <InputLabel htmlFor="email" value="Email" />
 

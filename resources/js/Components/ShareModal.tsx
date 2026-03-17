@@ -3,7 +3,6 @@ import Modal from '@/Components/Modal';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
 import axios from 'axios';
-import { router } from '@inertiajs/react';
 
 interface ShareModalProps {
   show: boolean;
@@ -24,6 +23,7 @@ interface User {
   id: number;
   name: string;
   email: string;
+  role: string;
 }
 
 const permissionLevels: PermissionLevel[] = [
@@ -63,42 +63,44 @@ export default function ShareModal({
   const [isLoading, setIsLoading] = useState(false);
   const [shareLink, setShareLink] = useState('');
   const [showLink, setShowLink] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<User[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
 
-  // Search for users
+  // Load users for dropdown
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
+    if (!show) {
       return;
     }
 
-    const searchUsers = async () => {
-      setIsSearching(true);
+    const loadUsers = async () => {
+      setIsLoadingUsers(true);
       try {
-        const response = await axios.get(`/api/users?search=${encodeURIComponent(searchQuery)}`);
-        setSearchResults(response.data);
+        const response = await axios.get('/api/users');
+        setAllUsers(Array.isArray(response.data) ? response.data : []);
       } catch (error) {
-        console.error('Failed to search users:', error);
-        setSearchResults([]);
+        console.error('Failed to load users:', error);
+        setAllUsers([]);
       } finally {
-        setIsSearching(false);
+        setIsLoadingUsers(false);
       }
     };
 
-    const debounceTimer = setTimeout(searchUsers, 300);
-    return () => clearTimeout(debounceTimer);
-  }, [searchQuery]);
+    loadUsers();
+  }, [show]);
 
-  // Add user to selected users
-  const handleAddUser = (user: User) => {
+  const handleAddUser = () => {
+    if (!selectedUserId) return;
+
+    const user = allUsers.find((u) => String(u.id) === selectedUserId);
+    if (!user) return;
+
     if (!selectedUsers.find(u => u.id === user.id)) {
       setSelectedUsers([...selectedUsers, user]);
-      setSearchQuery('');
-      setSearchResults([]);
     }
+
+    setSelectedUserId('');
   };
 
   // Remove user from selected users
@@ -171,11 +173,14 @@ export default function ShareModal({
     setPermissionLevel('viewer');
     setExpirationDate('');
     setIsPublic(false);
-    setSearchQuery('');
-    setSearchResults([]);
+    setSelectedUserId('');
     setSelectedUsers([]);
     onClose();
   };
+
+  const dropdownUsers = allUsers.filter(
+    (user) => !selectedUsers.some((selected) => selected.id === user.id),
+  );
 
     return (
         <Modal show={show} onClose={handleClose} title={`Share ${slug === 'stego' ? 'Stego File' : slug === 'folder' ? 'Folder' : 'Document'}`}>
@@ -231,50 +236,40 @@ export default function ShareModal({
               />
             </div>
 
-            {/* Search and select users */}
+            {/* Dropdown user selection */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Share with specific users (optional)
               </label>
-              
-              {/* Search bar */}
-              <div className="mb-3">
-                <input
-                  type="text"
-                  placeholder="Search for users by name or email..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedUserId}
+                  onChange={(e) => setSelectedUserId(e.target.value)}
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                />
-                {isSearching && (
-                  <div className="mt-2 text-sm text-gray-500">Searching...</div>
-                )}
+                  disabled={isLoadingUsers}
+                >
+                  <option value="">
+                    {isLoadingUsers ? 'Loading users...' : 'Select a user'}
+                  </option>
+                  {dropdownUsers.map((user) => (
+                    <option key={user.id} value={String(user.id)}>
+                      {user.name} ({user.role}) - {user.email}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddUser}
+                  disabled={!selectedUserId || isLoadingUsers}
+                  className="rounded-md border border-indigo-600 px-3 py-2 text-sm font-medium text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:border-gray-300 disabled:text-gray-400"
+                >
+                  Add
+                </button>
               </div>
 
-              {/* Search results */}
-              {searchResults.length > 0 && (
-                <div className="mb-3">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Search Results</h4>
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {searchResults.map((user) => (
-                      <div
-                        key={user.id}
-                        className="flex items-center justify-between p-2 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer"
-                        onClick={() => handleAddUser(user)}
-                      >
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                          <div className="text-xs text-gray-500">{user.email}</div>
-                        </div>
-                        <button
-                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                        >
-                          Add
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              {!isLoadingUsers && allUsers.length === 0 && (
+                <p className="mt-2 text-sm text-gray-500">No users available.</p>
               )}
 
               {/* Selected users */}
@@ -289,7 +284,7 @@ export default function ShareModal({
                       >
                         <div>
                           <div className="text-sm font-medium text-gray-900">{user.name}</div>
-                          <div className="text-xs text-gray-500">{user.email}</div>
+                          <div className="text-xs text-gray-500">{user.email} • {user.role}</div>
                         </div>
                         <button
                           onClick={() => handleRemoveUser(user.id)}

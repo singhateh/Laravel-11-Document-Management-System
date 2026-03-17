@@ -56,6 +56,6 @@ class RegisteredUserController extends Controller
         // Store the derived Master Key server-side for immediate use after registration.
         session(['stego_mkd' => $mkdResult['masterKey']]);
 
-        return redirect(route('home', absolute: false));
+        return redirect(route('dashboard', absolute: false));
     }
 }

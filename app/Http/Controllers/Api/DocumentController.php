@@ -78,46 +78,50 @@ class DocumentController extends Controller
         $folderId   = (int) $request->input('folder_id');
         $visibility = $request->input('visibility', 'public');
         $created    = [];
-
-        DB::beginTransaction();
+        $movedPaths = [];
 
         try {
-            foreach ($request->file('files') as $file) {
-                $destDir  = 'documents/' . $folderId;
-                $destPath = public_path($destDir);
+            DB::transaction(function () use ($request, $folderId, $visibility, $user, &$created, &$movedPaths) {
+                foreach ($request->file('files') as $file) {
+                    $destDir  = 'documents/' . $folderId;
+                    $destPath = public_path($destDir);
 
-                if (!file_exists($destPath)) {
-                    mkdir($destPath, 0777, true);
+                    if (!file_exists($destPath)) {
+                        mkdir($destPath, 0777, true);
+                    }
+
+                    $filename = $file->getClientOriginalName();
+                    $size = (int) ($file->getSize() ?? 0);
+                    $file->move($destPath, $filename);
+                    $relPath  = $destDir . '/' . $filename;
+                    $movedPaths[] = public_path($relPath);
+
+                    $doc = Document::create([
+                        'name'          => $filename,
+                        'original_name' => $filename,
+                        'extension'     => $file->getClientOriginalExtension(),
+                        'file_path'     => $relPath,
+                        'size'          => $size,
+                        'folder_id'     => $folderId,
+                        'visibility'    => $visibility,
+                        'owner_id'      => $user->id,
+                        'document_date' => now(),
+                    ]);
+
+                    if ($this->documentService->isEncryptionEnabled()) {
+                        $this->documentService->encryptDocumentFile($doc);
+                        $doc->refresh();
+                    }
+
+                    $created[] = $this->documentResource($doc);
                 }
-
-                $filename = $file->getClientOriginalName();
-                $file->move($destPath, $filename);
-                $relPath  = $destDir . '/' . $filename;
-
-                $doc = Document::create([
-                    'name'          => $filename,
-                    'original_name' => $filename,
-                    'extension'     => $file->getClientOriginalExtension(),
-                    'file_path'     => $relPath,
-                    'size'          => $file->getSize(),
-                    'folder_id'     => $folderId,
-                    'visibility'    => $visibility,
-                    'owner_id'      => $user->id,
-                    'document_date' => now(),
-                ]);
-
-                // W3-T02: encrypt at rest if DOCUMENT_MASTER_KEY is configured
-                if ($this->documentService->isEncryptionEnabled()) {
-                    $this->documentService->encryptDocumentFile($doc);
-                    $doc->refresh();
-                }
-
-                $created[] = $this->documentResource($doc);
-            }
-
-            DB::commit();
+            });
         } catch (\Throwable $e) {
-            DB::rollBack();
+            foreach ($movedPaths as $path) {
+                if (file_exists($path)) {
+                    @unlink($path);
+                }
+            }
             return response()->json(['message' => 'Upload failed: ' . $e->getMessage()], 500);
         }
 

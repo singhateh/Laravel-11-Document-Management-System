@@ -24,10 +24,10 @@ class StoreFileRequestRequest extends FormRequest
         return [
             'name' => 'required|string|max:255',
             'request_to' => 'nullable|string|max:255',
-            'folder_id' => 'nullable|string|max:255',
-            'tag_id' => 'nullable|string|max:255',
-            'due_date_in_number' => 'nullable|string|max:255',
-            'note' => 'nullable|string|max:255',
+            'folder_id' => 'nullable|exists:folders,id',
+            'tag_id' => 'nullable|exists:tags,id',
+            'due_date_in_number' => 'nullable|integer|min:0',
+            'note' => 'nullable|string',
         ];
     }
 
@@ -39,14 +39,10 @@ class StoreFileRequestRequest extends FormRequest
             'name.max' => 'The document name must not exceed 255 characters.',
             'request_to.string' => 'The request to field must be a string.',
             'request_to.max' => 'The request to field must not exceed 255 characters.',
-            'folder_id.string' => 'The folder ID field must be a string.',
-            'folder_id.max' => 'The folder ID field must not exceed 255 characters.',
-            'tag_id.string' => 'The tag ID field must be a string.',
-            'tag_id.max' => 'The tag ID field must not exceed 255 characters.',
-            'due_date_in_number.string' => 'The due date in number field must be a string.',
-            'due_date_in_number.max' => 'The due date in number field must not exceed 255 characters.',
+            'folder_id.exists' => 'The selected folder does not exist.',
+            'tag_id.exists' => 'The selected tag does not exist.',
+            'due_date_in_number.integer' => 'The due date must be a number.',
             'note.string' => 'The note field must be a string.',
-            'note.max' => 'The note field must not exceed 255 characters.',
         ];
     }
 }

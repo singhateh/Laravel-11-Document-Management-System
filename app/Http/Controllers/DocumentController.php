@@ -11,9 +11,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use App\Http\Requests\StoreDocumentRequest;
+use App\Http\Requests\UpdateDocumentRequest;
 use App\Services\DocumentService;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
+use Illuminate\Http\JsonResponse;
 
 
 class DocumentController extends Controller
@@ -70,23 +72,20 @@ class DocumentController extends Controller
 
     public function updateDocumentOrder(Request $request)
     {
+        $validated = $request->validate([
+            'folder_id' => ['required', 'exists:folders,id'],
+            'document_ids' => ['required', 'array', 'min:1'],
+            'document_ids.*' => ['integer', 'exists:documents,id'],
+        ]);
+
         try {
+            DB::transaction(function () use ($validated) {
+                $this->documentService->setUpdateDocumentOrder($validated['folder_id'], $validated['document_ids']);
+            });
 
-            // Begin transaction
-            DB::beginTransaction();
-
-            $folderId = $request->folder_id;
-
-            $this->documentService->setUpdateDocumentOrder($folderId, $request->document_ids);
-
-            // Commit transaction
-            DB::commit();
-
-            return response()->json(['url' => route('getFiles', $folderId)], 200);
+            return response()->json(['url' => route('getFiles', $validated['folder_id'])], 200);
         } catch (\Throwable $th) {
-            // Rollback transaction on failure
-            DB::rollback();
-            return response()->json(['error' => $th->getMessage()]);
+            return response()->json(['error' => $th->getMessage()], 500);
         }
     }
 
@@ -117,17 +116,17 @@ class DocumentController extends Controller
 
     public function updateVisibility(Request $request)
     {
-        $documentId = $request->input('document_id');
-        $visibility = $request->input('visibility');
+        $validated = $request->validate([
+            'document_id' => ['required', 'integer', 'exists:documents,id'],
+            'visibility' => ['required', 'in:public,private'],
+        ]);
 
-        // Update the visibility of the document
-        $document = Document::find($documentId);
+        $document = Document::findOrFail($validated['document_id']);
+        $this->authorize('update', $document);
 
-        if (!$document) {
-            return response()->json(['message' => 'Document not found'], 404);
-        }
-
-        $document->update(['visibility' => $visibility === 'private' ? 'public' : 'private']);
+        $document->update([
+            'visibility' => $validated['visibility'] === 'private' ? 'public' : 'private',
+        ]);
 
         return response()->json([
             'message' => 'Visibility updated successfully',
@@ -139,6 +138,15 @@ class DocumentController extends Controller
 
     public function sendDocumentEmail(Request $request)
     {
+        $request->validate([
+            'title' => ['nullable', 'string', 'max:255'],
+            'body' => ['nullable', 'string'],
+            'type' => ['required', 'string', 'max:100'],
+            'document_id' => ['required', 'integer', 'exists:documents,id'],
+            'content' => ['required', 'string'],
+            'user_email' => ['nullable', 'email', 'max:255'],
+        ]);
+
         $notifications = $this->documentService->setSendDocumentEmail($request);
 
         // Return JSON data for React frontend
@@ -151,7 +159,11 @@ class DocumentController extends Controller
 
     public function getDocumentComments(Request $request)
     {
-        $notifications = $this->documentService->getDocumentNotifications($request->document_id);
+        $validated = $request->validate([
+            'document_id' => ['required', 'integer', 'exists:documents,id'],
+        ]);
+
+        $notifications = $this->documentService->getDocumentNotifications($validated['document_id']);
 
         // Return JSON data for React frontend
         return response()->json(['notifications' => $notifications]);
@@ -298,18 +310,14 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function update(Request $request, Document $document)
+    public function update(UpdateDocumentRequest $request, Document $document)
     {
         // Check if user has permission to update the document
         if (!Auth::user()->can('update', $document)) {
             abort(403, 'You do not have permission to update this document.');
         }
 
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'visibility' => 'sometimes|in:public,private',
-            'folder_id' => 'nullable|exists:folders,id',
-        ]);
+        $validated = $request->validated();
 
         $document->update($validated);
 
@@ -335,9 +343,21 @@ class DocumentController extends Controller
         return response()->json(['message' => 'Document deleted successfully']);
     }
 
-    function changeFile(Request $request)
+    public function changeFile(Request $request)
     {
+        $request->validate([
+            'document_id' => ['required', 'integer', 'exists:documents,id'],
+            'folder_id' => ['required', 'integer', 'exists:folders,id'],
+            'type' => ['required', 'in:file_name,owner,archive,file,folder'],
+            'data' => ['nullable'],
+            'file' => ['nullable', 'file'],
+        ]);
+
         $folderId = $this->documentService->setChangeFile($request);
+
+        if ($folderId instanceof JsonResponse) {
+            return $folderId;
+        }
 
         return response()->json(['message' => 'Document updated successfully', 'url' => route('getFiles', $folderId)], 200);
     }

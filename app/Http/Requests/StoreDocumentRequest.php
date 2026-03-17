@@ -26,15 +26,23 @@ class StoreDocumentRequest extends FormRequest
 
         if ($this->has('url')) {
             $rules = [
-                'name' => 'required|string',
-                'url' => 'required|string',
+                'name' => 'required|string|max:255',
+                'folder_id' => 'required|exists:folders,id',
+                'url' => 'required|url|max:2048',
+                'visibility' => 'nullable|in:public,private',
             ];
         } elseif ($this->has('folder_name')) {
             $rules = [
+                'folder_id' => 'required|exists:folders,id',
+                'folder_name' => 'required|string|max:255',
+                'files' => 'required|array|min:1',
                 'files.*' => 'required|file',
+                'visibility' => 'nullable|in:public,private',
             ];
         } else {
             $rules = [
+                'folder_id' => 'required|exists:folders,id',
+                'files' => 'required|array|min:1',
                 'files.*' => 'required|file',
             ];
         }

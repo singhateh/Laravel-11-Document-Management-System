@@ -5,10 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Notification;
 use App\Http\Requests\StoreNotificationRequest;
 use App\Http\Requests\UpdateNotificationRequest;
-use App\Models\Customer;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 
 class NotificationController extends Controller
@@ -82,22 +80,18 @@ class NotificationController extends Controller
     }
 
 
-    function store(Request $request)
+    public function store(StoreNotificationRequest $request)
     {
-
-        $request->validate([
-            'customer_id' => 'required|uuid',
-            'message' => 'required|string',
-        ]);
-
+        $validated = $request->validated();
 
         $notification =  Notification::create([
-            'notifiable_id'   => $request->customer_id,
+            'notifiable_id'   => $validated['customer_id'],
             'notifiable_type' => User::class,
             'activity_type'   => 'note_added',
             'model_type'      => User::class,
-            'model_id'        => $request->customer_id,
-            'message'         => $request->message,
+            'model_id'        => $validated['customer_id'],
+            'message'         => $validated['message'],
+            'created_by_user_id' => $request->user()?->id ?? 1,
         ]);
 
         $data = $notification->customer?->recentNotifications;

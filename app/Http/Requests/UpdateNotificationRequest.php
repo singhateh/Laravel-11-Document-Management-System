@@ -11,7 +11,7 @@ class UpdateNotificationRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -22,7 +22,9 @@ class UpdateNotificationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            //
+            'status' => ['sometimes', 'in:UNREAD,READ'],
+            'dismiss_status' => ['sometimes', 'in:UNDISMISSED,DISMISSED'],
+            'message' => ['sometimes', 'string'],
         ];
     }
 }

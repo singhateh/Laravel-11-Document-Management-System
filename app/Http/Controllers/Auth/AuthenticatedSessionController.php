@@ -52,7 +52,7 @@ class AuthenticatedSessionController extends Controller
         }
         session(['stego_mkd' => $mkdResult['masterKey']]);
 
-        return redirect()->intended(route('home', absolute: false));
+        return redirect()->intended(route('dashboard', absolute: false));
     }
 
     /**
