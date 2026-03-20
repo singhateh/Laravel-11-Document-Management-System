@@ -36,25 +36,43 @@ export default function Decode() {
     }, [decodingStatus]);
 
     const checkDecodingStatus = async () => {
+        if (!selected) return;
+
         try {
-            const response = await axios.get(`/api/stego/documents/${selected}`);
-            const updatedDoc = response.data;
+            const response = await axios.get(`/api/stego/documents/${selected}/status`);
+            const statusData = response.data;
+
+            if (!statusData || typeof statusData !== 'object' || !statusData.status) {
+                throw new Error('Invalid status response from server.');
+            }
+
+            const nextStatus = statusData.status as string;
             
             setDocs(prevDocs => prevDocs.map(doc => 
-                doc.id === parseInt(selected) ? { ...doc, ...updatedDoc } : doc
+                doc.id === parseInt(selected) ? { 
+                    ...doc, 
+                    decoding_status: nextStatus,
+                    decoding_error: statusData.error,
+                    download_path: statusData.download_path
+                } : doc
             ));
 
-            setDecodingStatus(updatedDoc.decoding_status);
+            setDecodingStatus(nextStatus);
 
-            if (updatedDoc.decoding_status === 'completed') {
+            if (nextStatus === 'completed') {
                 // Decoding is complete, show download button
                 setDecodingStatus('completed');
-            } else if (updatedDoc.decoding_status === 'failed') {
+            } else if (nextStatus === 'failed') {
                 // Decoding failed
-                setError(updatedDoc.decoding_error || 'Decoding failed.');
+                setError(statusData.error || 'Decoding failed.');
             }
-        } catch (error) {
+        } catch (error: unknown) {
             console.error('Error checking decoding status:', error);
+            if (error instanceof Error) {
+                setError(error.message);
+            } else {
+                setError('Failed to check decoding status.');
+            }
         }
     };
 
@@ -63,7 +81,13 @@ export default function Decode() {
         setSessionExpired(false);
         setLoading(true);
         try {
-            const res = await axios.post('/api/stego/decode', { stego_document_id: selected });
+            const res = await axios.post('/api/stego/decode', {
+                stego_document_id: Number(selected),
+            });
+
+            if (!res || (res.status !== 200 && res.status !== 202)) {
+                throw new Error('Decode request was not accepted by the server.');
+            }
             
             // Set initial decoding status
             setDecodingStatus('pending');

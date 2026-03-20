@@ -93,6 +93,35 @@ class DecodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
     }
 
     /**
+     * Called by the queue worker when the job exhausts its attempts or fails.
+     */
+    public function failed(\Throwable $e): void
+    {
+        // Ensure stego document status is set to failed even if the job fails before handling
+        StegoDocument::where('id', $this->stegoDocumentId)
+            ->where('decoding_status', 'pending')
+            ->update([
+                'decoding_status' => 'failed',
+                'decoding_error' => substr($e->getMessage(), 0, 500),
+            ]);
+
+        // Cleanup any partial downloads
+        $this->cleanupPartialDownload();
+    }
+
+    /**
+     * Cleanup any partial download files
+     */
+    private function cleanupPartialDownload(): void
+    {
+        $downloadDir = 'decoded/' . $this->stegoDocumentId;
+        
+        if (Storage::exists($downloadDir)) {
+            Storage::deleteDirectory($downloadDir);
+        }
+    }
+
+    /**
      * Generate a unique path for storing the decoded document
      */
     private function generateDownloadPath(StegoDocument $stegoDoc, $document): string

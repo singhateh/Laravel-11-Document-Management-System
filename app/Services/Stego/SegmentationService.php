@@ -83,6 +83,25 @@ class SegmentationService
             throw new Exception('No segments provided for reassembly.');
         }
 
+        // Validate segment structure
+        foreach ($segments as $i => $segment) {
+            if (!isset($segment['index'], $segment['chunk'], $segment['hash'])) {
+                throw new Exception("Segment {$i} missing required fields: index, chunk, or hash");
+            }
+
+            if (!is_int($segment['index']) || $segment['index'] < 0) {
+                throw new Exception("Segment {$i} has invalid index: must be a non-negative integer");
+            }
+
+            if (!is_string($segment['chunk'])) {
+                throw new Exception("Segment {$segment['index']} chunk must be a string");
+            }
+
+            if (!is_string($segment['hash']) || strlen($segment['hash']) !== 64) {
+                throw new Exception("Segment {$segment['index']} has invalid hash: must be 64-character hex string");
+            }
+        }
+
         // Sort by segment index to guarantee correct order.
         usort($segments, fn ($a, $b) => $a['index'] <=> $b['index']);
 
@@ -109,6 +128,10 @@ class SegmentationService
             }
 
             $data .= $segment['chunk'];
+        }
+
+        if (empty($data)) {
+            throw new Exception('Reassembled data is empty');
         }
 
         return $data;

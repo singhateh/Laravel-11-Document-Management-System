@@ -129,6 +129,24 @@ class CryptoService
      */
     public function encrypt(string $plaintext, string $dek): array
     {
+        // Validate inputs
+        if (empty($plaintext)) {
+            throw new Exception('Plaintext cannot be empty');
+        }
+
+        if (empty($dek)) {
+            throw new Exception('DEK cannot be empty');
+        }
+
+        try {
+            $dekBinary = hex2bin($dek);
+            if (strlen($dekBinary) !== self::KEY_LENGTH) {
+                throw new Exception('DEK must be a hex-encoded string of ' . (self::KEY_LENGTH * 2) . ' characters');
+            }
+        } catch (\Exception $e) {
+            throw new Exception('DEK must be a hex-encoded string of ' . (self::KEY_LENGTH * 2) . ' characters');
+        }
+
         // Compress BEFORE encrypting: encrypted output is random noise and
         // incompressible, so compression must come first to be effective.
         $compressed = gzcompress($plaintext, 6);
@@ -139,7 +157,7 @@ class CryptoService
         $ciphertext = openssl_encrypt(
             $compressed,
             self::CIPHER,
-            hex2bin($dek),
+            $dekBinary,
             OPENSSL_RAW_DATA,
             $iv,
             $tag,
@@ -175,15 +193,59 @@ class CryptoService
      */
     public function decrypt(string $ciphertext, string $dek, string $iv, string $authTag): string
     {
+        // Validate inputs
+        if (empty($ciphertext)) {
+            throw new Exception('Ciphertext cannot be empty');
+        }
+
+        if (empty($dek)) {
+            throw new Exception('DEK cannot be empty');
+        }
+
+        try {
+            $dekBinary = hex2bin($dek);
+            if (strlen($dekBinary) !== self::KEY_LENGTH) {
+                throw new Exception('DEK must be a hex-encoded string of ' . (self::KEY_LENGTH * 2) . ' characters');
+            }
+        } catch (\Exception $e) {
+            throw new Exception('DEK must be a hex-encoded string of ' . (self::KEY_LENGTH * 2) . ' characters');
+        }
+
+        if (empty($iv)) {
+            throw new Exception('IV cannot be empty');
+        }
+
+        try {
+            $ivBinary = base64_decode($iv);
+            if (strlen($ivBinary) !== self::IV_LENGTH) {
+                throw new Exception('IV must be a base64-encoded string of ' . self::IV_LENGTH . ' bytes');
+            }
+        } catch (\Exception $e) {
+            throw new Exception('IV must be a base64-encoded string of ' . self::IV_LENGTH . ' bytes');
+        }
+
+        if (empty($authTag)) {
+            throw new Exception('Auth tag cannot be empty');
+        }
+
+        try {
+            $authTagBinary = base64_decode($authTag);
+            if (strlen($authTagBinary) !== self::AUTH_TAG_LEN) {
+                throw new Exception('Auth tag must be a base64-encoded string of ' . self::AUTH_TAG_LEN . ' bytes');
+            }
+        } catch (\Exception $e) {
+            throw new Exception('Auth tag must be a base64-encoded string of ' . self::AUTH_TAG_LEN . ' bytes');
+        }
+
         // $ciphertext is raw binary reassembled from carrier chunks.
         // $iv and $authTag are base64-encoded strings stored in stego_documents.
         $compressed = openssl_decrypt(
             $ciphertext,
             self::CIPHER,
-            hex2bin($dek),
+            $dekBinary,
             OPENSSL_RAW_DATA,
-            base64_decode($iv),
-            base64_decode($authTag)
+            $ivBinary,
+            $authTagBinary
         );
 
         if ($compressed === false) {
@@ -191,7 +253,12 @@ class CryptoService
         }
 
         // Decompress AFTER decrypting to recover the original plaintext.
-        return gzuncompress($compressed);
+        $plaintext = gzuncompress($compressed);
+        if ($plaintext === false) {
+            throw new Exception('Failed to decompress decrypted data');
+        }
+
+        return $plaintext;
     }
 
     // -------------------------------------------------------------------------

@@ -60,6 +60,16 @@ class StegoDocumentController extends Controller
             30,
             fn () => Auth::user()
                 ->stegoDocuments()
+                ->select([
+                    'id',
+                    'document_id',
+                    'user_id',
+                    'status',
+                    'decoding_status',
+                    'download_path',
+                    'created_at',
+                    'updated_at',
+                ])
                 ->with(['document:id,name,extension'])
                 ->withCount('segments')
                 ->latest()
@@ -75,24 +85,75 @@ class StegoDocumentController extends Controller
 
     /**
      * Return a single stego document with its full document and all segments.
-     * Scoped to the authenticated user — returns 404 if not owned.
+     * Authorized via StegoDocumentPolicy.
      *
      * @param  int $id
      * @return JsonResponse
      */
     public function show(int $id): JsonResponse
     {
-        // Short TTL so pending→ready status transitions surface quickly.
-        $doc = Cache::remember(
-            "stego.doc.{$id}.u" . Auth::id(),
-            30,
-            fn () => Auth::user()
-                ->stegoDocuments()
-                ->with(['document', 'segments'])
-                ->findOrFail($id)
-        );
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('viewerGrants', fn ($g) =>
+                      $g->where('viewer_user_id', $user->id)
+                  );
+            })
+            ->where('id', $id)
+            ->select([
+                'id',
+                'document_id',
+                'user_id',
+                'status',
+                'decoding_status',
+                'decoding_error',
+                'download_path',
+                'created_at',
+                'updated_at',
+            ])
+            ->with(['document:id,name,extension'])
+            ->withCount('segments')
+            ->firstOrFail();
 
-        return response()->json($doc);
+        return response()->json($stegoDoc);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/stego/documents/{id}/status
+    // -------------------------------------------------------------------------
+
+    /**
+     * Return a lean status payload specifically for polling decode operations.
+     * Contains only the essential fields needed to update the UI.
+     *
+     * @param  int $id
+     * @return JsonResponse
+     */
+    public function status(int $id): JsonResponse
+    {
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('viewerGrants', fn ($g) =>
+                      $g->where('viewer_user_id', $user->id)
+                  );
+            })
+            ->where('id', $id)
+            ->select([
+                'id',
+                'decoding_status',
+                'decoding_error',
+                'download_path',
+            ])
+            ->firstOrFail();
+
+        return response()->json([
+            'status' => $stegoDoc->decoding_status,
+            'error' => $stegoDoc->decoding_error,
+            'download_path' => $stegoDoc->download_path,
+        ]);
     }
 
     // -------------------------------------------------------------------------
@@ -100,16 +161,19 @@ class StegoDocumentController extends Controller
     // -------------------------------------------------------------------------
 
     /**
-     * Delete a stego document owned by the authenticated user.
-     * Scoped query ensures users can only delete their own records.
+     * Delete a stego document.
+     * Authorized via StegoDocumentPolicy.
      *
      * @param  int $id
      * @return JsonResponse
      */
     public function destroy(int $id): JsonResponse
     {
-        $doc = Auth::user()->stegoDocuments()->findOrFail($id);
-        $doc->delete();
+        $stegoDoc = StegoDocument::findOrFail($id);
+        
+        $this->authorize('delete', $stegoDoc);
+        
+        $stegoDoc->delete();
 
         return response()->json(['message' => 'Deleted.']);
     }
@@ -217,6 +281,7 @@ class StegoDocumentController extends Controller
                   );
             })
             ->where('id', $request->stego_document_id)
+            ->select(['id', 'document_id', 'user_id'])
             ->with('document')
             ->firstOrFail();
 
@@ -262,6 +327,13 @@ class StegoDocumentController extends Controller
                   );
             })
             ->where('id', $id)
+            ->select([
+                'id',
+                'document_id',
+                'user_id',
+                'decoding_status',
+                'download_path',
+            ])
             ->with('document')
             ->firstOrFail();
 
@@ -303,12 +375,15 @@ class StegoDocumentController extends Controller
      *
      * @param  Request $request  { viewer_user_id: int }
      * @param  int     $id       StegoDocument id
-     * @return JsonResponse      201 { message, grant } | 404 | 409 | 422
+     * @return JsonResponse      201 { message, grant } | 403 | 404 | 409 | 422
      */
     public function grant(Request $request, int $id): JsonResponse
     {
-        // Ownership check — 404 if not the owner.
-        $stegoDoc = Auth::user()->stegoDocuments()->findOrFail($id);
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where('user_id', $user->id)
+            ->where('id', $id)
+            ->firstOrFail();
 
         $request->validate([
             'viewer_user_id' => ['required', 'integer', 'exists:users,id'],
@@ -350,6 +425,54 @@ class StegoDocumentController extends Controller
     }
 
     // -------------------------------------------------------------------------
+    // GET /api/stego/documents/{id}/grants
+    // -------------------------------------------------------------------------
+
+    /**
+     * List all viewer grants for a stego document.
+     *
+     * Only the document's owner may call this endpoint.
+     *
+     * @param  int $id StegoDocument id
+     * @return JsonResponse 200 { grants: [...] } | 403 | 404
+     */
+    public function listGrants(int $id): JsonResponse
+    {
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where('user_id', $user->id)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $grants = $stegoDoc->viewerGrants()
+            ->with(['viewer:id,name,email', 'grantor:id,name,email'])
+            ->latest()
+            ->get()
+            ->map(function ($grant) {
+                return [
+                    'id'                 => $grant->id,
+                    'stego_document_id'  => $grant->stego_document_id,
+                    'viewer_user_id'     => $grant->viewer_user_id,
+                    'viewer'             => [
+                        'id'    => $grant->viewer->id,
+                        'name'  => $grant->viewer->name,
+                        'email' => $grant->viewer->email,
+                    ],
+                    'granted_by'         => $grant->granted_by,
+                    'grantor'            => [
+                        'id'    => $grant->grantor->id,
+                        'name'  => $grant->grantor->name,
+                        'email' => $grant->grantor->email,
+                    ],
+                    'created_at'         => $grant->created_at?->toISOString(),
+                    'updated_at'         => $grant->updated_at?->toISOString(),
+                ];
+            });
+
+        return response()->json(['grants' => $grants]);
+    }
+
+    // -------------------------------------------------------------------------
     // DELETE /api/stego/documents/{id}/grant/{viewer_user_id}
     // -------------------------------------------------------------------------
 
@@ -361,12 +484,15 @@ class StegoDocumentController extends Controller
      * @param  Request $request
      * @param  int     $id             StegoDocument id
      * @param  int     $viewerUserId   User id whose grant should be removed
-     * @return JsonResponse            200 | 404
+     * @return JsonResponse            200 | 403 | 404
      */
     public function revokeGrant(Request $request, int $id, int $viewerUserId): JsonResponse
     {
-        // Ownership check — 404 if not the owner.
-        $stegoDoc = Auth::user()->stegoDocuments()->findOrFail($id);
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where('user_id', $user->id)
+            ->where('id', $id)
+            ->firstOrFail();
 
         $grant = StegoDocumentGrant::where('stego_document_id', $stegoDoc->id)
             ->where('viewer_user_id', $viewerUserId)

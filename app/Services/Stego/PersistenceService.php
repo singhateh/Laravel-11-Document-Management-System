@@ -31,7 +31,7 @@ class PersistenceService
      * @param  array{
      *   document_id: int|null,
      *   user_id: int,
-     *   ciphertext: string,
+    *   ciphertext: string|null,
      *   stego_iv: string,
      *   stego_auth_tag: string,
      *   stego_hash_sha256: string,
@@ -72,6 +72,23 @@ class PersistenceService
     public function findStegoDocument(int $id): StegoDocument
     {
         $doc = StegoDocument::with(['segments' => fn ($q) => $q->orderBy('segment_index')])
+            ->select([
+                'id',
+                'document_id',
+                'user_id',
+                'stego_iv',
+                'stego_auth_tag',
+                'stego_hash_sha256',
+                'stego_dek_salt',
+                'stego_dek_iter',
+                'compressed',
+                's3_key',
+                'status',
+                'failed_reason',
+                'decoding_status',
+                'decoding_error',
+                'download_path',
+            ])
             ->find($id);
 
         if (!$doc) {

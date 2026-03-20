@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 use App\Http\Requests\StoreDocumentRequest;
 use App\Http\Requests\UpdateDocumentRequest;
 use App\Services\DocumentService;
+use App\Models\DocumentWatcher;
+use App\Models\Notification;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Illuminate\Http\JsonResponse;
@@ -292,6 +294,12 @@ class DocumentController extends Controller
             'wav'  => 'audio/wav',
             'm4a'  => 'audio/mp4',
             'txt'  => 'text/plain',
+            'doc'  => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls'  => 'application/vnd.ms-excel',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ppt'  => 'application/vnd.ms-powerpoint',
+            'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         ];
 
         $ext      = strtolower($document->extension ?? pathinfo($document->file_path, PATHINFO_EXTENSION));
@@ -318,13 +326,76 @@ class DocumentController extends Controller
         }
 
         $validated = $request->validated();
+        $user = Auth::user();
 
-        $document->update($validated);
+        $document->update(array_merge($validated, [
+            'last_updated_at' => now(),
+            'last_updated_by' => $user->name,
+        ]));
+
+        // Notify watchers about the update
+        $this->notifyWatchers($document, $user);
 
         return response()->json([
             'message' => 'Document updated successfully',
             'document' => $document->fresh(['tags']),
         ]);
+    }
+
+    private function notifyWatchers(Document $document, $user)
+    {
+        $watchers = $document->watchers()->with('user')->get();
+        
+        foreach ($watchers as $watcher) {
+            if ($watcher->user->id !== $user->id) {
+                Notification::create([
+                    'notifiable_id' => $watcher->user->id,
+                    'notifiable_type' => User::class,
+                    'activity_type' => 'document_updated',
+                    'model_type' => Document::class,
+                    'model_id' => $document->id,
+                    'message' => "Document '{$document->name}' has been updated by {$user->name}",
+                    'status' => 'UNREAD',
+                    'dismiss_status' => 'UNDISMISSED',
+                    'created_by_user_id' => $user->id,
+                ]);
+            }
+        }
+    }
+
+    public function watch(Document $document)
+    {
+        $user = Auth::user();
+        
+        if (!$user->can('view', $document)) {
+            abort(403, 'You do not have permission to watch this document.');
+        }
+
+        DocumentWatcher::firstOrCreate([
+            'user_id' => $user->id,
+            'document_id' => $document->id,
+        ]);
+
+        return response()->json(['message' => 'Document added to watch list']);
+    }
+
+    public function unwatch(Document $document)
+    {
+        $user = Auth::user();
+        
+        DocumentWatcher::where('user_id', $user->id)
+            ->where('document_id', $document->id)
+            ->delete();
+
+        return response()->json(['message' => 'Document removed from watch list']);
+    }
+
+    public function isWatched(Document $document)
+    {
+        $user = Auth::user();
+        $isWatched = $document->isWatchedByUser($user->id);
+
+        return response()->json(['is_watched' => $isWatched]);
     }
 
     public function destroy(Document $document)
@@ -353,11 +424,18 @@ class DocumentController extends Controller
             'file' => ['nullable', 'file'],
         ]);
 
+        $documentId = $request->input('document_id');
+        $document = Document::find($documentId);
+        $user = Auth::user();
+
         $folderId = $this->documentService->setChangeFile($request);
 
         if ($folderId instanceof JsonResponse) {
             return $folderId;
         }
+
+        // Notify watchers about the update
+        $this->notifyWatchers($document, $user);
 
         return response()->json(['message' => 'Document updated successfully', 'url' => route('getFiles', $folderId)], 200);
     }

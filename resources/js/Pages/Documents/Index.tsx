@@ -1,7 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, router } from '@inertiajs/react';
 import { PageProps } from '@/types';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DragDropUploadModal from '@/Components/DragDropUploadModal';
 import DocumentPreview from '@/Components/DocumentPreview';
 import PrimaryButton from '@/Components/PrimaryButton';
@@ -59,6 +59,7 @@ export default function Index({
     const [editName, setEditName] = useState('');
     const [showShareModal, setShowShareModal] = useState(false);
     const [documentToShare, setDocumentToShare] = useState<{id: number; name: string} | null>(null);
+    const [watchedDocuments, setWatchedDocuments] = useState<number[]>([]);
 
     const handleUploadSuccess = () => {
         router.reload();
@@ -123,6 +124,49 @@ export default function Index({
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
     };
+
+    const checkIfWatched = async (documentId: number) => {
+        try {
+            const response = await axios.get(`/documents/${documentId}/is-watched`);
+            return response.data.is_watched;
+        } catch (error) {
+            console.error('Failed to check if document is watched:', error);
+            return false;
+        }
+    };
+
+    const handleWatch = async (documentId: number) => {
+        try {
+            await axios.post(`/documents/${documentId}/watch`);
+            setWatchedDocuments(prev => [...prev, documentId]);
+        } catch (error) {
+            console.error('Failed to watch document:', error);
+        }
+    };
+
+    const handleUnwatch = async (documentId: number) => {
+        try {
+            await axios.delete(`/documents/${documentId}/unwatch`);
+            setWatchedDocuments(prev => prev.filter(id => id !== documentId));
+        } catch (error) {
+            console.error('Failed to unwatch document:', error);
+        }
+    };
+
+    // Load watched documents on component mount
+    useEffect(() => {
+        const loadWatchedDocuments = async () => {
+            const watched = [];
+            for (const doc of documents) {
+                const isWatched = await checkIfWatched(doc.id);
+                if (isWatched) {
+                    watched.push(doc.id);
+                }
+            }
+            setWatchedDocuments(watched);
+        };
+        loadWatchedDocuments();
+    }, [documents]);
 
     const getFileIcon = (extension: string) => {
         const iconMap: Record<string, string> = {
@@ -296,45 +340,58 @@ export default function Index({
                                                     <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                                                         {new Date(document.created_at).toLocaleDateString()}
                                                     </td>
-                                                    <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                                                         <div className="flex items-center justify-end gap-2">
-                                                            <button
-                                                                onClick={() => handlePreview(document)}
-                                                                className="text-indigo-600 hover:text-indigo-900"
-                                                                title="Preview"
-                                                            >
-                                                                👁️
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDownload(document)}
-                                                                className="text-green-600 hover:text-green-900"
-                                                                title="Download"
-                                                            >
-                                                                ⬇️
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleShare(document)}
-                                                                className="text-blue-600 hover:text-blue-900"
-                                                                title="Share"
-                                                            >
-                                                                📤
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleEdit(document)}
-                                                                className="text-yellow-600 hover:text-yellow-900"
-                                                                title="Edit"
-                                                            >
-                                                                ✏️
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDelete(document.id, document.name)}
-                                                                className="text-red-600 hover:text-red-900"
-                                                                title="Delete"
-                                                            >
-                                                                🗑️
-                                                            </button>
-                                                        </div>
-                                                    </td>
+                            <td className="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                                 <div className="flex items-center justify-end gap-2">
+                                    <button
+                                        onClick={() => handlePreview(document)}
+                                        className="text-indigo-600 hover:text-indigo-900"
+                                        title="Preview"
+                                    >
+                                        👁️
+                                    </button>
+                                    <button
+                                        onClick={() => handleDownload(document)}
+                                        className="text-green-600 hover:text-green-900"
+                                        title="Download"
+                                    >
+                                        ⬇️
+                                    </button>
+                                    <button
+                                        onClick={() => handleShare(document)}
+                                        className="text-blue-600 hover:text-blue-900"
+                                        title="Share"
+                                    >
+                                        📤
+                                    </button>
+                                    <button
+                                        onClick={() => handleEdit(document)}
+                                        className="text-yellow-600 hover:text-yellow-900"
+                                        title="Edit"
+                                    >
+                                        ✏️
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (watchedDocuments.includes(document.id)) {
+                                                handleUnwatch(document.id);
+                                            } else {
+                                                handleWatch(document.id);
+                                            }
+                                        }}
+                                        className={watchedDocuments.includes(document.id) ? 'text-orange-600 hover:text-orange-900' : 'text-gray-500 hover:text-gray-700'}
+                                        title={watchedDocuments.includes(document.id) ? 'Unwatch' : 'Watch'}
+                                    >
+                                        {watchedDocuments.includes(document.id) ? '🔔' : '🔕'}
+                                    </button>
+                                    <button
+                                        onClick={() => handleDelete(document.id, document.name)}
+                                        className="text-red-600 hover:text-red-900"
+                                        title="Delete"
+                                    >
+                                        🗑️
+                                    </button>
+                                </div>
+                            </td>
                                                 </tr>
                                             ))}
                                         </tbody>

@@ -193,4 +193,125 @@ class CryptoServiceTest extends TestCase
 
         $this->assertFalse($this->crypto->verifyHash('altered content', $hash));
     }
+
+    // -------------------------------------------------------------------------
+    // Validation checks
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function encrypt_throws_with_empty_plaintext(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/plaintext cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->encrypt('', $dek['dek']);
+    }
+
+    #[Test]
+    public function encrypt_throws_with_empty_dek(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/dek cannot be empty/i');
+        
+        $this->crypto->encrypt('test content', '');
+    }
+
+    #[Test]
+    public function encrypt_throws_with_invalid_dek_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a hex-encoded string of 64 characters/i');
+        
+        $this->crypto->encrypt('test content', str_repeat('0', 63)); // 63 characters
+    }
+
+    #[Test]
+    public function encrypt_throws_with_invalid_dek_format(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a hex-encoded string/i');
+        
+        $this->crypto->encrypt('test content', 'invalid-dek');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_ciphertext(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/ciphertext cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('', $dek['dek'], 'iv', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_dek(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/dek cannot be empty/i');
+        
+        $this->crypto->decrypt('ciphertext', '', 'iv', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_invalid_dek(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a hex-encoded string of 64 characters/i');
+        
+        $this->crypto->decrypt('ciphertext', str_repeat('0', 63), 'iv', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_iv(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/iv cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], '', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_invalid_iv_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a base64-encoded string of 12 bytes/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], base64_encode(str_repeat('0', 11)), 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_auth_tag(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/auth tag cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], base64_encode(str_repeat('0', 12)), '');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_invalid_auth_tag_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a base64-encoded string of 16 bytes/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], base64_encode(str_repeat('0', 12)), base64_encode(str_repeat('0', 15)));
+    }
 }

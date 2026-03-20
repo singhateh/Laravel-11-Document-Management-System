@@ -317,4 +317,63 @@ class SegmentationServiceTest extends TestCase
         // 3MB data, 4 carriers each with 1MB capacity (our new logic uses all available carriers)
         $this->assertSame(4, $this->svc->recommendedSegmentCount(3 * 1024 * 1024, [1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024]));
     }
+
+    // -------------------------------------------------------------------------
+    // reassemble() validation checks
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function reassemble_throws_with_missing_fields(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/missing required fields/i');
+        
+        $this->svc->reassemble([
+            ['chunk' => 'data', 'hash' => '0123456789abcdef0123456789abcdef0123456789abcdef'],
+        ]);
+    }
+
+    #[Test]
+    public function reassemble_throws_with_invalid_index_type(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/invalid index/i');
+        
+        $this->svc->reassemble([
+            ['index' => '0', 'chunk' => 'data', 'hash' => '0123456789abcdef0123456789abcdef0123456789abcdef'],
+        ]);
+    }
+
+    #[Test]
+    public function reassemble_throws_with_negative_index(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/invalid index/i');
+        
+        $this->svc->reassemble([
+            ['index' => -1, 'chunk' => 'data', 'hash' => '0123456789abcdef0123456789abcdef0123456789abcdef'],
+        ]);
+    }
+
+    #[Test]
+    public function reassemble_throws_with_invalid_hash_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/invalid hash/i');
+        
+        $this->svc->reassemble([
+            ['index' => 0, 'chunk' => 'data', 'hash' => 'invalid'],
+        ]);
+    }
+
+    #[Test]
+    public function reassemble_throws_with_empty_reassembled_data(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/reassembled data is empty/i');
+        
+        $this->svc->reassemble([
+            ['index' => 0, 'chunk' => '', 'hash' => hash('sha256', '')],
+        ]);
+    }
 }

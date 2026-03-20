@@ -3,9 +3,11 @@
 namespace App\Services\Stego;
 
 use App\Models\Document;
+use App\Models\StegoDocument;
 use Exception;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 /**
@@ -63,8 +65,40 @@ class StegoDocumentService
         ?int $documentId = null,
         ?int $existingDocId = null,
     ): array {
+        // Validate inputs
+        if ($userId <= 0) {
+            throw new Exception('Invalid user ID');
+        }
+
+        if (empty($plaintext)) {
+            throw new Exception('Plaintext cannot be empty');
+        }
+
+        if (empty($masterKey) || strlen($masterKey) !== 64) {
+            throw new Exception('Master key must be a 64-character hex string');
+        }
+
         if (empty($carrierPaths)) {
             throw new Exception('At least one carrier file is required for encoding.');
+        }
+
+        foreach ($carrierPaths as $index => $path) {
+            if (empty($path) || !is_string($path)) {
+                throw new Exception("Carrier path at index {$index} is invalid");
+            }
+
+            if (!file_exists($path)) {
+                throw new Exception("Carrier file not found: {$path}");
+            }
+
+            if (!is_readable($path)) {
+                throw new Exception("Carrier file is not readable: {$path}");
+            }
+
+            $size = filesize($path);
+            if ($size === false || $size === 0) {
+                throw new Exception("Carrier file is empty: {$path}");
+            }
         }
 
         // -----------------------------------------------------------------
@@ -106,7 +140,8 @@ class StegoDocumentService
             $coreData = [
                 'document_id'       => $documentId,
                 'user_id'           => $userId,
-                'ciphertext'        => $encrypted['ciphertext'],
+                // Keep heavy ciphertext out of DB for faster local fetches.
+                'ciphertext'        => null,
                 'stego_iv'          => $encrypted['iv'],
                 'stego_auth_tag'    => $encrypted['auth_tag'],
                 'stego_hash_sha256' => $hash,
@@ -120,6 +155,14 @@ class StegoDocumentService
             $stegoDoc = $existingDocId
                 ? $this->persistence->updateStegoDocument($existingDocId, $coreData)
                 : $this->persistence->createStegoDocument($coreData);
+
+            // Persist base64 ciphertext as a local file and store only its path.
+            $ciphertextPath = $this->storeCiphertextOnLocalDisk($stegoDoc->id, $encrypted['ciphertext']);
+            $stegoDoc->update([
+                'ciphertext' => null,
+                's3_key'     => $ciphertextPath,
+            ]);
+            $stegoDoc = $stegoDoc->fresh();
 
             foreach ($segments as $seg) {
                 $idx         = $seg['index'];
@@ -153,13 +196,13 @@ class StegoDocumentService
 
                 // Persist the segment record.
                 // base64-encode the raw binary chunk for safe storage in the longtext column.
-                $segKey = $this->cloud->segmentKey($stegoDoc->id, $idx);
                 $segmentRecords[] = [
                     'stego_document_id' => $stegoDoc->id,
                     'stego_carrier_id'  => $carrier->id,
                     'segment_index'     => $idx,
                     'encrypted_chunk'   => base64_encode($seg['chunk']),
-                    's3_key'            => $segKey,
+                    // Local mode keeps the encrypted chunk in DB; no object key is needed.
+                    's3_key'            => null,
                     'chunk_hash'        => $seg['hash'],
                 ];
             }
@@ -214,39 +257,67 @@ class StegoDocumentService
      */
     public function decode(int $stegoDocumentId, string $masterKey, int $userId): string
     {
+        $tStart = microtime(true);
+
+        // Validate inputs
+        if ($stegoDocumentId <= 0) {
+            throw new Exception('Invalid StegoDocument ID');
+        }
+
+        if ($userId <= 0) {
+            throw new Exception('Invalid user ID');
+        }
+
+        if (empty($masterKey) || strlen($masterKey) !== 64) {
+            throw new Exception('Master key must be a 64-character hex string');
+        }
+
         // -----------------------------------------------------------------
         // Step 1: Load metadata and segments
         // -----------------------------------------------------------------
         $stegoDoc = $this->persistence->findStegoDocument($stegoDocumentId);
-        $segments = $this->persistence->getSegments($stegoDocumentId);
+        $tMetaLoaded = microtime(true);
 
-        if (empty($segments)) {
-            throw new Exception("StegoDocument #{$stegoDocumentId} has no segments.");
-        }
+        $segments = $this->persistence->getSegments($stegoDocumentId);
+        $tSegmentsLoaded = microtime(true);
 
         $tmpDir = $this->makeTmpDir('stegolock_dec_');
 
         try {
-            // -----------------------------------------------------------------
-            // Steps 2 & 3: Download carriers from S3 and extract chunks
-            // -----------------------------------------------------------------
-            $reassemblySegments = [];
+            $ciphertext = null;
+            $ciphertextSource = null;
 
-            foreach ($segments as $segment) {
-                // Use the stored base64-encoded chunk instead of extracting from carrier
-                $chunk = base64_decode($segment->encrypted_chunk);
+            if (!empty($segments)) {
+                // -----------------------------------------------------------------
+                // Steps 2 & 3: Download carriers from S3 and extract chunks
+                // -----------------------------------------------------------------
+                $reassemblySegments = [];
 
-                $reassemblySegments[] = [
-                    'index' => $segment->segment_index,
-                    'chunk' => $chunk,
-                    'hash'  => $segment->chunk_hash,
-                ];
+                foreach ($segments as $segment) {
+                    // Use strict mode to fail fast if any stored segment is malformed.
+                    $chunk = base64_decode($segment->encrypted_chunk, true);
+                    if ($chunk === false) {
+                        throw new Exception("Malformed segment payload at index {$segment->segment_index}.");
+                    }
+
+                    $reassemblySegments[] = [
+                        'index' => $segment->segment_index,
+                        'chunk' => $chunk,
+                        'hash'  => $segment->chunk_hash,
+                    ];
+                }
+
+                // -----------------------------------------------------------------
+                // Step 4: Reassemble chunks (with hash integrity verification)
+                // -----------------------------------------------------------------
+                $ciphertext = $this->segmentation->reassemble($reassemblySegments, verifyHashes: true);
+                $ciphertextSource = 'segments';
+            } else {
+                // Backward compatibility for records without segment rows.
+                $ciphertext = $this->loadCiphertextForDecode($stegoDoc);
+                $ciphertextSource = $stegoDoc->s3_key ? 'local_file' : 'db_column';
             }
-
-            // -----------------------------------------------------------------
-            // Step 4: Reassemble chunks (with hash integrity verification)
-            // -----------------------------------------------------------------
-            $ciphertext = $this->segmentation->reassemble($reassemblySegments, verifyHashes: true);
+            $tCipherReady = microtime(true);
 
             // -----------------------------------------------------------------
             // Step 5: Re-derive DEK and decrypt
@@ -265,6 +336,7 @@ class StegoDocumentService
                 $stegoDoc->stego_iv,
                 $stegoDoc->stego_auth_tag
             );
+            $tDecryptDone = microtime(true);
 
             // -----------------------------------------------------------------
             // Step 6: Verify document integrity hash
@@ -272,6 +344,7 @@ class StegoDocumentService
             if (!$this->crypto->verifyHash($plaintext, $stegoDoc->stego_hash_sha256)) {
                 throw new Exception('Document integrity check failed. Hash mismatch after decryption.');
             }
+            $tHashVerified = microtime(true);
 
             // Log the decode operation.
             $this->persistence->logAccess([
@@ -280,6 +353,17 @@ class StegoDocumentService
                 'resource'    => 'stego_document',
                 'resource_id' => $stegoDoc->id,
                 'payload'     => ['status' => 'success'],
+            ]);
+
+            logger()->info('stego.decode.timing', [
+                'stego_document_id' => $stegoDocumentId,
+                'ciphertext_source' => $ciphertextSource,
+                'db_meta_fetch_ms'  => round(($tMetaLoaded - $tStart) * 1000, 2),
+                'db_segments_ms'    => round(($tSegmentsLoaded - $tMetaLoaded) * 1000, 2),
+                'cipher_ready_ms'   => round(($tCipherReady - $tSegmentsLoaded) * 1000, 2),
+                'decrypt_ms'        => round(($tDecryptDone - $tCipherReady) * 1000, 2),
+                'hash_verify_ms'    => round(($tHashVerified - $tDecryptDone) * 1000, 2),
+                'total_ms'          => round(($tHashVerified - $tStart) * 1000, 2),
             ]);
 
         } finally {
@@ -361,6 +445,32 @@ class StegoDocumentService
         }
 
         return 'binary';
+    }
+
+    private function storeCiphertextOnLocalDisk(int $stegoDocumentId, string $base64Ciphertext): string
+    {
+        $relativePath = "stego/ciphertext/{$stegoDocumentId}.enc";
+        Storage::disk('local')->put($relativePath, $base64Ciphertext);
+
+        return $relativePath;
+    }
+
+    private function loadCiphertextForDecode($stegoDoc): string
+    {
+        if (!empty($stegoDoc->s3_key) && Storage::disk('local')->exists($stegoDoc->s3_key)) {
+            return Storage::disk('local')->get($stegoDoc->s3_key);
+        }
+
+        // Query legacy DB ciphertext only when needed to keep regular fetches lean.
+        $legacyCiphertext = StegoDocument::query()
+            ->whereKey($stegoDoc->id)
+            ->value('ciphertext');
+
+        if (!empty($legacyCiphertext)) {
+            return $legacyCiphertext;
+        }
+
+        throw new Exception("StegoDocument #{$stegoDoc->id} has no recoverable ciphertext source.");
     }
 
     private function cleanupDir(string $dir): void

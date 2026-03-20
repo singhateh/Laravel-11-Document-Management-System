@@ -27,6 +27,16 @@ class StegoWebController extends Controller
         $user = Auth::user();
 
         $stegoDocs = StegoDocument::where('user_id', $user->id)
+            ->select([
+                'id',
+                'document_id',
+                'user_id',
+                'status',
+                'decoding_status',
+                'download_path',
+                'created_at',
+                'updated_at',
+            ])
             ->with(['document:id,name,extension,size'])
             ->withCount('segments')
             ->latest()
@@ -106,6 +116,15 @@ class StegoWebController extends Controller
         $user = Auth::user();
 
         $stegoDocs = StegoDocument::where('user_id', $user->id)
+            ->select([
+                'id',
+                'document_id',
+                'user_id',
+                'decoding_status',
+                'decoding_error',
+                'download_path',
+                'created_at',
+            ])
             ->with(['document:id,name,extension'])
             ->withCount('segments')
             ->latest()
@@ -118,6 +137,9 @@ class StegoWebController extends Controller
                     'extension' => $s->document->extension,
                 ] : null,
                 'segments_count' => $s->segments_count,
+                'decoding_status' => $s->decoding_status,
+                'decoding_error'  => $s->decoding_error,
+                'download_path'   => $s->download_path,
                 'created_at'     => $s->created_at?->toISOString(),
             ]);
 
@@ -143,8 +165,16 @@ class StegoWebController extends Controller
         // Verify ownership
         $stegoDoc = StegoDocument::where('user_id', $user->id)
             ->where('id', $request->stego_document_id)
+            ->select(['id', 'document_id', 'user_id'])
             ->with('document')
             ->firstOrFail();
+
+        // Keep web decode state aligned with API decode workflow.
+        $stegoDoc->update([
+            'decoding_status' => 'pending',
+            'decoding_error'  => null,
+            'download_path'   => null,
+        ]);
 
         try {
             $plaintext = $this->stegoService->decode(
@@ -155,12 +185,21 @@ class StegoWebController extends Controller
 
             $filename = $this->buildDecodeFilename($stegoDoc);
 
-            // Write to temp file and return as download
-            $tmp = tempnam(sys_get_temp_dir(), 'stego_out_');
-            file_put_contents($tmp, $plaintext);
+            $downloadPath = 'decoded/' . $stegoDoc->id . '/' . $filename;
+            Storage::disk('local')->put($downloadPath, $plaintext);
 
-            return response()->download($tmp, $filename)->deleteFileAfterSend(true);
+            $stegoDoc->update([
+                'decoding_status' => 'completed',
+                'download_path'   => $downloadPath,
+            ]);
+
+            return response()->download(Storage::disk('local')->path($downloadPath), $filename);
         } catch (\Exception $e) {
+            $stegoDoc->update([
+                'decoding_status' => 'failed',
+                'decoding_error'  => substr($e->getMessage(), 0, 500),
+            ]);
+
             if ($request->expectsJson()) {
                 return response()->json(['message' => 'Decoding failed: ' . $e->getMessage()], 422);
             }

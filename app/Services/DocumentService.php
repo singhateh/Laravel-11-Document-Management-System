@@ -388,8 +388,8 @@ class DocumentService
 
         // Simple single-field mutations handled with a match expression.
         match ($type) {
-            'file_name' => $document->update(['name' => $requestData]),
-            'owner'     => $document->update(['owner_id' => $requestData]),
+            'file_name' => $document->update(['name' => $requestData, 'last_updated_at' => now(), 'last_updated_by' => Auth::user()->name]),
+            'owner'     => $document->update(['owner_id' => $requestData, 'last_updated_at' => now(), 'last_updated_by' => Auth::user()->name]),
             'archive'   => $document->delete(),
             default     => null,
         };
@@ -415,6 +415,8 @@ class DocumentService
                 'original_name' => $fileName,
                 'size'          => $file->getSize(),
                 'extension'     => $file->getClientOriginalExtension(),
+                'last_updated_at' => now(),
+                'last_updated_by' => Auth::user()->name,
             ]);
         }
 
@@ -425,6 +427,8 @@ class DocumentService
             $document->update([
                 'folder'    => $folderId,
                 'file_path' => $relativePath,
+                'last_updated_at' => now(),
+                'last_updated_by' => Auth::user()->name,
             ]);
         }
 

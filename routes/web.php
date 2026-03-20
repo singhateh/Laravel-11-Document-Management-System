@@ -88,6 +88,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/documents/{document}/view', [DocumentController::class, 'view'])->name('documents.view');
     Route::put('/documents/{document}', [DocumentController::class, 'update'])->name('documents.update');
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+    Route::post('/documents/{document}/watch', [DocumentController::class, 'watch'])->name('documents.watch');
+    Route::delete('/documents/{document}/unwatch', [DocumentController::class, 'unwatch'])->name('documents.unwatch');
+    Route::get('/documents/{document}/is-watched', [DocumentController::class, 'isWatched'])->name('documents.isWatched');
     Route::post('/update-visibility', [DocumentController::class, 'updateVisibility'])->name('update.visibility');
 
     Route::get('/getFiles/{folder}', [DocumentController::class, 'getFiles'])->name('getFiles');

@@ -76,8 +76,11 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         // List the authenticated user's stego documents
         Route::get('/documents',     [StegoDocumentController::class, 'index'])->name('documents.index');
 
-        // Retrieve metadata for a single stego document
-        Route::get('/documents/{id}', [StegoDocumentController::class, 'show'])->name('documents.show');
+         // Retrieve metadata for a single stego document
+         Route::get('/documents/{id}', [StegoDocumentController::class, 'show'])->name('documents.show');
+         
+         // Retrieve lean decode status for polling
+         Route::get('/documents/{id}/status', [StegoDocumentController::class, 'status'])->name('documents.status');
 
         // Encode a document (multipart form-data) — returns JSON { stego_document_id, quality_metrics }
         Route::post('/encode', [StegoDocumentController::class, 'encode'])->name('encode');
@@ -92,6 +95,11 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         // Grant viewer-decode access to another user (owner only)
         Route::post('/documents/{id}/grant',                      [StegoDocumentController::class, 'grant'])
             ->name('documents.grant')
+            ->whereNumber('id');
+
+        // List all grants for a stego document (owner only)
+        Route::get('/documents/{id}/grants',                      [StegoDocumentController::class, 'listGrants'])
+            ->name('documents.grants.index')
             ->whereNumber('id');
 
         // Revoke a viewer's access (owner only)

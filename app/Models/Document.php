@@ -39,6 +39,8 @@ class Document extends Model
         'url', 'owner_id', 'document_date', 'emojis', 'position',
         // AES-256-GCM encryption metadata
         'is_encrypted', 'enc_iv', 'enc_auth_tag', 'enc_dek_salt', 'enc_dek_iterations', 'enc_hash_sha256',
+        // Document watcher fields
+        'last_updated_at', 'last_updated_by',
     ];
 
     protected function casts(): array
@@ -104,6 +106,16 @@ class Document extends Model
     public function isStegoed(): bool
     {
         return $this->stegoDocument()->exists();
+    }
+
+    public function watchers()
+    {
+        return $this->hasMany(DocumentWatcher::class);
+    }
+
+    public function isWatchedByUser($userId)
+    {
+        return $this->watchers()->where('user_id', $userId)->exists();
     }
 
     // Method to delete associated file from public path
