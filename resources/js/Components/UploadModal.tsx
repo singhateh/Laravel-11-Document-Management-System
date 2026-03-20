@@ -21,6 +21,11 @@ interface UploadModalProps {
     onSuccess?: () => void;
 }
 
+const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+
+const getOversizedFiles = (fileList: FileList) =>
+    Array.from(fileList).filter((file) => file.size > MAX_FILE_SIZE_BYTES);
+
 export default function UploadModal({ show, onClose, folders = [], currentFolderId, onSuccess }: UploadModalProps) {
     const [files, setFiles] = useState<FileList | null>(null);
     const [folderName, setFolderName] = useState('');
@@ -38,6 +43,12 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
 
         if (!files || files.length === 0) {
             setError('Please select files to upload');
+            return;
+        }
+
+        const oversizedFiles = getOversizedFiles(files);
+        if (oversizedFiles.length > 0) {
+            setError(`Some files exceed 100 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
             return;
         }
 
@@ -63,6 +74,7 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
         try {
             const response = await axios.post('/upload', formData, {
                 headers: {
+                    'Accept': 'application/json',
                     'Content-Type': 'multipart/form-data',
                 },
             });
@@ -83,7 +95,7 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
                 const errors = Object.values(err.response.data.errors).flat();
                 setError(errors.join(', '));
             } else {
-                setError(err.response?.data?.message || 'Upload failed');
+                setError(err.response?.data?.error || err.response?.data?.message || 'Upload failed');
             }
         } finally {
             setUploading(false);
@@ -92,6 +104,19 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFiles = e.target.files;
+        if (!selectedFiles || selectedFiles.length === 0) {
+            setFiles(null);
+            return;
+        }
+
+        const oversizedFiles = getOversizedFiles(selectedFiles);
+        if (oversizedFiles.length > 0) {
+            setError(`Some files exceed 100 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+            setFiles(null);
+            return;
+        }
+
+        setError('');
         setFiles(selectedFiles);
 
         // Auto-detect folder name from directory upload

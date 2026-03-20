@@ -98,6 +98,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/getDocumentComments', [DocumentController::class, 'getDocumentComments'])->name('getDocumentComments');
 
     Route::post('/upload', [DocumentController::class, 'uploadDocumentFiles'])->name('upload');
+    Route::get('/upload', fn () => redirect()->route('documents.index'))->name('upload.fallback');
     Route::post('/change-document', [DocumentController::class, 'changeFile'])->name('changeFile');
     Route::get('/filter-documents-by-tags', [DocumentController::class, 'filterDocumentByTag'])->name('filterDocumentByTag');
     Route::post('/update-document-order', [DocumentController::class, 'updateDocumentOrder'])->name('update.document.order');
@@ -164,5 +165,18 @@ Route::get('/stego-app/{any?}', fn () => view('stegolock'))
 // Share Documents Route (public)
 Route::get('/{slug?}/share/{id?}/{token?}', [ShareDocumentController::class, 'getSharedDocuments'])->name('getSharedDocuments');
 Route::post('/share-document', [ShareDocumentController::class, 'sharedDocuments'])->name('sharedDocuments');
+
+Route::post('/debug-upload', function (Illuminate\Http\Request $request) {
+    \Illuminate\Support\Facades\Log::info('Debug upload request:', [
+        'has_files' => $request->hasFile('files'),
+        'files' => $request->file('files'),
+        'all' => $request->all(),
+    ]);
+    return response()->json([
+        'has_files' => $request->hasFile('files'),
+        'files' => $request->file('files'),
+        'all' => $request->all(),
+    ]);
+});
 
 require __DIR__.'/auth.php';

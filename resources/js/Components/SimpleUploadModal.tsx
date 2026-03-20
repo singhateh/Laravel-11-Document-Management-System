@@ -63,6 +63,7 @@ export default function SimpleUploadModal({
         try {
             await axios.post('/upload', formData, {
                 headers: {
+                    'Accept': 'application/json',
                     'Content-Type': 'multipart/form-data',
                 },
             });
@@ -81,7 +82,7 @@ export default function SimpleUploadModal({
                 const errors = Object.values(err.response.data.errors).flat();
                 setError(errors.join(', '));
             } else {
-                setError(err.response?.data?.message || 'Upload failed');
+                setError(err.response?.data?.error || err.response?.data?.message || 'Upload failed');
             }
         } finally {
             setUploading(false);

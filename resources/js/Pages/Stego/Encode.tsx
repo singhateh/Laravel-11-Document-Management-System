@@ -98,8 +98,23 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
     const addFiles = (files: FileList | null) => {
         if (!files) return;
         const validFiles = Array.from(files).filter((f) =>
-            /\.(png|bmp|jpe?g)$/i.test(f.name)
+            /\.(png|bmp|jpe?g)$/i.test(f.name) && f.size <= 100 * 1024 * 1024
         );
+        const invalidFiles = Array.from(files).filter((f) =>
+            !/\.(png|bmp|jpe?g)$/i.test(f.name) || f.size > 100 * 1024 * 1024
+        );
+        if (invalidFiles.length > 0) {
+            const errorMessages = [];
+            const invalidTypes = invalidFiles.filter(f => !/\.(png|bmp|jpe?g)$/i.test(f.name));
+            const oversizedFiles = invalidFiles.filter(f => f.size > 100 * 1024 * 1024);
+            if (invalidTypes.length > 0) {
+                errorMessages.push(`Invalid file type(s): ${invalidTypes.map(f => f.name).join(', ')} (only PNG, BMP, JPEG allowed)`);
+            }
+            if (oversizedFiles.length > 0) {
+                errorMessages.push(`File(s) too large: ${oversizedFiles.map(f => f.name).join(', ')} (max 100 MB)`);
+            }
+            setErrorMsg(errorMessages.join('. '));
+        }
         if (validFiles.length === 0) return;
 
         // Add loading placeholders immediately so spinners appear right away
@@ -337,7 +352,7 @@ export default function Encode({ auth, documents, errors = {} }: EncodeProps) {
                                         🖼️ Upload carrier images
                                     </h3>
                                     <p className="mb-4 text-sm text-gray-500">
-                                        PNG, BMP or JPEG only. Multiple files allowed — data is distributed across
+                                        PNG, BMP or JPEG only (max 100 MB per file). Multiple files allowed — data is distributed across
                                         all carriers. Each carrier must achieve PSNR ≥ 40 dB after embedding.
                                     </p>
                                     {errors.carriers && (

@@ -19,6 +19,11 @@ interface DragDropUploadModalProps {
     onSuccess?: () => void;
 }
 
+const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+
+const getOversizedFiles = (fileList: FileList) =>
+    Array.from(fileList).filter((file) => file.size > MAX_FILE_SIZE_BYTES);
+
 export default function DragDropUploadModal({ 
     show, 
     onClose, 
@@ -71,12 +76,27 @@ export default function DragDropUploadModal({
 
         const droppedFiles = e.dataTransfer.files;
         if (droppedFiles && droppedFiles.length > 0) {
+            const oversizedFiles = getOversizedFiles(droppedFiles);
+            if (oversizedFiles.length > 0) {
+                setError(`Some files exceed 100 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+                return;
+            }
+
+            setError('');
             setFiles(droppedFiles);
         }
     };
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
+            const oversizedFiles = getOversizedFiles(e.target.files);
+            if (oversizedFiles.length > 0) {
+                setError(`Some files exceed 100 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+                setFiles(null);
+                return;
+            }
+
+            setError('');
             setFiles(e.target.files);
         }
     };
@@ -114,6 +134,7 @@ export default function DragDropUploadModal({
         try {
             await axios.post('/upload', formData, {
                 headers: {
+                    'Accept': 'application/json',
                     'Content-Type': 'multipart/form-data',
                 },
             });
@@ -195,7 +216,7 @@ export default function DragDropUploadModal({
                         <p className="mt-1 text-sm text-gray-600">or drag and drop</p>
                     </div>
                     <p className="mt-2 text-xs text-gray-500">
-                        Any file type, any size
+                        All file types allowed (max 100 MB per file)
                     </p>
                 </div>
 

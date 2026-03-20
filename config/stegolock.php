@@ -95,6 +95,6 @@ return [
     |
     */
 
-    'max_carrier_size_mb' => (int) env('STEGOLOCK_MAX_CARRIER_MB', 20),
+    'max_carrier_size_mb' => (int) env('STEGOLOCK_MAX_CARRIER_MB', 100),
 
 ];

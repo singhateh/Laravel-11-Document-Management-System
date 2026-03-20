@@ -204,7 +204,7 @@ class StegoDocumentController extends Controller
         $request->validate([
             'document_id' => ['required', 'integer', 'exists:documents,id'],
             'carriers'    => ['required', 'array', 'min:1'],
-            'carriers.*'  => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
+            'carriers.*'  => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:102400'],
         ]);
 
         $user     = Auth::user();

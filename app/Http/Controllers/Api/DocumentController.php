@@ -69,7 +69,7 @@ class DocumentController extends Controller
     {
         $request->validate([
             'files'      => ['required', 'array', 'min:1'],
-            'files.*'    => ['required', 'file', 'max:51200'],
+            'files.*'    => ['required', 'file', 'max:102400'],
             'folder_id'  => ['required', 'integer', 'exists:folders,id'],
             'visibility' => ['sometimes', 'in:public,private'],
         ]);
