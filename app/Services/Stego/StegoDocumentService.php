@@ -355,6 +355,8 @@ class StegoDocumentService
                 'payload'     => ['status' => 'success'],
             ]);
 
+            $totalDuration = round(($tHashVerified - $tStart), 3);
+            
             logger()->info('stego.decode.timing', [
                 'stego_document_id' => $stegoDocumentId,
                 'ciphertext_source' => $ciphertextSource,
@@ -365,6 +367,9 @@ class StegoDocumentService
                 'hash_verify_ms'    => round(($tHashVerified - $tDecryptDone) * 1000, 2),
                 'total_ms'          => round(($tHashVerified - $tStart) * 1000, 2),
             ]);
+            
+            // Save decoding duration
+            $stegoDoc->update(['decoding_duration' => $totalDuration]);
 
         } finally {
             $this->cleanupDir($tmpDir);
@@ -471,6 +476,56 @@ class StegoDocumentService
         }
 
         throw new Exception("StegoDocument #{$stegoDoc->id} has no recoverable ciphertext source.");
+    }
+
+    /**
+     * Estimate decoding time for a pending StegoDocument based on historical decoding speed.
+     *
+     * @param int $stegoDocumentId Primary key of the StegoDocument to estimate
+     * @return float|null Estimated decoding time in seconds, or null if insufficient data
+     */
+    public function estimateDecodingTime(int $stegoDocumentId): ?float
+    {
+        $stegoDoc = $this->persistence->findStegoDocument($stegoDocumentId);
+        
+        // If document has already been decoded, return actual duration
+        if (!empty($stegoDoc->decoding_duration)) {
+            return $stegoDoc->decoding_duration;
+        }
+        
+        // Get total carrier size for this document
+        $totalCarrierSize = $stegoDoc->segments()
+            ->join('stego_carriers', 'stego_segments.stego_carrier_id', '=', 'stego_carriers.id')
+            ->sum('stego_carriers.size');
+        
+        if ($totalCarrierSize <= 0) {
+            return null;
+        }
+        
+        // Calculate average decoding speed (bytes per second) from completed documents
+        $averageSpeed = StegoDocument::query()
+            ->whereNotNull('decoding_duration')
+            ->where('decoding_duration', '>', 0)
+            ->with(['segments' => function ($query) {
+                $query->join('stego_carriers', 'stego_segments.stego_carrier_id', '=', 'stego_carriers.id')
+                    ->select('stego_segments.stego_document_id', 'stego_carriers.size');
+            }])
+            ->get()
+            ->map(function ($doc) {
+                $docCarrierSize = $doc->segments->sum('size');
+                return $docCarrierSize > 0 ? $docCarrierSize / $doc->decoding_duration : null;
+            })
+            ->filter()
+            ->avg();
+        
+        if ($averageSpeed <= 0) {
+            return null;
+        }
+        
+        // Estimate decoding time
+        $estimatedTime = $totalCarrierSize / $averageSpeed;
+        
+        return round($estimatedTime, 3);
     }
 
     private function cleanupDir(string $dir): void

@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -22,8 +23,57 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::table('document_tag', function (Blueprint $table) {
-            $table->dropUnique(['document_id', 'tag_id']);
+        if (! Schema::hasTable('document_tag')) {
+            return;
+        }
+
+        $uniqueName = 'document_tag_document_id_tag_id_unique';
+        $documentFkName = 'document_tag_document_id_foreign';
+        $tagFkName = 'document_tag_tag_id_foreign';
+
+        $hasUnique = $this->indexExists('document_tag', $uniqueName);
+        $hasDocumentForeign = $this->foreignKeyExists('document_tag', $documentFkName);
+        $hasTagForeign = $this->foreignKeyExists('document_tag', $tagFkName);
+
+        Schema::table('document_tag', function (Blueprint $table) use ($hasUnique, $hasDocumentForeign, $hasTagForeign) {
+            if ($hasDocumentForeign) {
+                $table->dropForeign(['document_id']);
+            }
+
+            if ($hasTagForeign) {
+                $table->dropForeign(['tag_id']);
+            }
+
+            if ($hasUnique) {
+                $table->dropUnique(['document_id', 'tag_id']);
+            }
+
+            if ($hasDocumentForeign) {
+                $table->foreign('document_id')->references('id')->on('documents')->onDelete('cascade');
+            }
+
+            if ($hasTagForeign) {
+                $table->foreign('tag_id')->references('id')->on('tags')->onDelete('cascade');
+            }
         });
+    }
+
+    private function indexExists(string $tableName, string $indexName): bool
+    {
+        return DB::table('information_schema.statistics')
+            ->whereRaw('table_schema = DATABASE()')
+            ->where('table_name', $tableName)
+            ->where('index_name', $indexName)
+            ->exists();
+    }
+
+    private function foreignKeyExists(string $tableName, string $constraintName): bool
+    {
+        return DB::table('information_schema.table_constraints')
+            ->whereRaw('constraint_schema = DATABASE()')
+            ->where('table_name', $tableName)
+            ->where('constraint_name', $constraintName)
+            ->where('constraint_type', 'FOREIGN KEY')
+            ->exists();
     }
 };

@@ -3,7 +3,9 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DocumentController as ApiDocumentController;
+use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\StegoDocumentController;
+use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -102,12 +104,17 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
             ->name('documents.grants.index')
             ->whereNumber('id');
 
-        // Revoke a viewer's access (owner only)
-        Route::delete('/documents/{id}/grant/{viewer_user_id}',   [StegoDocumentController::class, 'revokeGrant'])
-            ->name('documents.grant.revoke')
-            ->whereNumber(['id', 'viewer_user_id']);
+         // Estimate decoding time (owner OR granted viewer)
+         Route::get('/documents/{id}/estimate-decoding-time', [StegoDocumentController::class, 'estimateDecodingTime'])
+             ->name('documents.estimate-decoding-time')
+             ->whereNumber('id');
 
-    });
+         // Revoke a viewer's access (owner only)
+         Route::delete('/documents/{id}/grant/{viewer_user_id}',   [StegoDocumentController::class, 'revokeGrant'])
+             ->name('documents.grant.revoke')
+             ->whereNumber(['id', 'viewer_user_id']);
+
+     });
 
     // SPA convenience aliases
     Route::get('/user',  [AuthController::class, 'me'])->name('api.user');
@@ -140,14 +147,20 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
         ->whereNumber('id');
     Route::get('/documents',      [ApiDocumentController::class, 'index'])->name('api.documents.index');
 
-     // Dashboard stats / recent (for SPA)
-      Route::prefix('dashboard')->group(function () {
-          Route::get('/stats',  [DashboardController::class, 'stats']);
-          Route::get('/recent', [DashboardController::class, 'recent']);
-      });
+    // Role management endpoints
+    Route::get('/roles', [RoleController::class, 'index'])->name('api.roles.index');
+    Route::get('/roles/{role}/permissions', [RoleController::class, 'permissions'])->name('api.roles.permissions');
 
-      // User search endpoint
-      Route::get('/users', [\App\Http\Controllers\UserController::class, 'search'])->name('api.users.search');
+    // User management endpoints
+    Route::get('/users', [UserController::class, 'index'])->name('api.users.index');
+    Route::put('/users/{id}/role', [UserController::class, 'updateRole'])->name('api.users.updateRole')->whereNumber('id');
+    Route::get('/users/search', [\App\Http\Controllers\UserController::class, 'search'])->name('api.users.search');
+
+    // Dashboard stats / recent (for SPA)
+    Route::prefix('dashboard')->group(function () {
+        Route::get('/stats',  [DashboardController::class, 'stats']);
+        Route::get('/recent', [DashboardController::class, 'recent']);
+    });
 
      // Collaboration and sharing endpoints
      Route::prefix('collaboration')->name('api.collaboration.')->group(function () {

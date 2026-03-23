@@ -6,12 +6,22 @@ use App\Models\ShareDocument;
 use App\Models\User;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class UserController extends Controller
 {
 
     public function search(Request $request)
     {
+        $user = Auth::user();
+        
+        // Only admins and owners can list all users without a search query
+        if (empty(trim($request->input('search', ''))) && empty(trim($request->input('q', '')))) {
+            if (!$user->isAdmin() && !$user->isOwner()) {
+                return response()->json(['message' => 'Forbidden: You do not have permission to list users.'], 403);
+            }
+        }
+
         $query = trim((string) $request->input('search', $request->input('q', '')));
 
         $usersQuery = User::query();
@@ -41,5 +51,5 @@ class UserController extends Controller
         return response()->json($userList);
     }
 
-  
+
 }

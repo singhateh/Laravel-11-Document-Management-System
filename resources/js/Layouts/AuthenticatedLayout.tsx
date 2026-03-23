@@ -47,18 +47,38 @@ export default function Authenticated({
                                 >
                                     Folders
                                 </NavLink>
-                                <NavLink
-                                    href={route('tags.index', undefined, false)}
-                                    active={route().current('tags.index')}
-                                >
-                                    Tags
-                                </NavLink>
-                                <NavLink
-                                    href={route('categories.index', undefined, false)}
-                                    active={route().current('categories.index')}
-                                >
-                                    Categories
-                                </NavLink>
+                                {(user.role === 'admin' || user.role === 'owner') && (
+                                    <>
+                                        <NavLink
+                                            href={route('tags.index', undefined, false)}
+                                            active={route().current('tags.index')}
+                                        >
+                                            Tags
+                                        </NavLink>
+                                        <NavLink
+                                            href={route('categories.index', undefined, false)}
+                                            active={route().current('categories.index')}
+                                        >
+                                            Categories
+                                        </NavLink>
+                                    </>
+                                )}
+
+                                {/* Admin/Owner management */}
+                                {(user.role === 'admin' || user.role === 'owner') && (
+                                    <>
+                                        <div className="mx-2 h-5 w-px bg-gray-200" />
+                                        <span className="px-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                                            Management
+                                        </span>
+                                        <NavLink
+                                            href={route('users.roles', undefined, false)}
+                                            active={route().current('users.roles')}
+                                        >
+                                            User Roles
+                                        </NavLink>
+                                    </>
+                                )}
 
                                 {/* Divider */}
                                 <div className="mx-2 h-5 w-px bg-gray-200" />
@@ -177,7 +197,7 @@ export default function Authenticated({
                 </div>
 
                 {/* Mobile menu */}
-                <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' sm:hidden'}>
+                        <div className={(showingNavigationDropdown ? 'block' : 'hidden') + ' sm:hidden'}>
                     <div className="space-y-1 pb-3 pt-2">
                         <div className="px-4 py-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
                             Repository
@@ -191,12 +211,27 @@ export default function Authenticated({
                         <ResponsiveNavLink href={route('folders.index', undefined, false)} active={route().current('folders.index')}>
                             Folders
                         </ResponsiveNavLink>
-                        <ResponsiveNavLink href={route('tags.index', undefined, false)} active={route().current('tags.index')}>
-                            Tags
-                        </ResponsiveNavLink>
-                        <ResponsiveNavLink href={route('categories.index', undefined, false)} active={route().current('categories.index')}>
-                            Categories
-                        </ResponsiveNavLink>
+                        {(user.role === 'admin' || user.role === 'owner') && (
+                            <>
+                                <ResponsiveNavLink href={route('tags.index', undefined, false)} active={route().current('tags.index')}>
+                                    Tags
+                                </ResponsiveNavLink>
+                                <ResponsiveNavLink href={route('categories.index', undefined, false)} active={route().current('categories.index')}>
+                                    Categories
+                                </ResponsiveNavLink>
+                            </>
+                        )}
+
+                        {(user.role === 'admin' || user.role === 'owner') && (
+                            <>
+                                <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                                    Management
+                                </div>
+                                <ResponsiveNavLink href={route('users.roles', undefined, false)} active={route().current('users.roles')}>
+                                    User Roles
+                                </ResponsiveNavLink>
+                            </>
+                        )}
 
                         <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-indigo-500">
                             🔒 StegoLock

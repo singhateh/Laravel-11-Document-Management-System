@@ -69,6 +69,7 @@ class StegoDocumentController extends Controller
                     'download_path',
                     'created_at',
                     'updated_at',
+                    'stego_hash_sha256',
                 ])
                 ->with(['document:id,name,extension'])
                 ->withCount('segments')
@@ -486,6 +487,34 @@ class StegoDocumentController extends Controller
      * @param  int     $viewerUserId   User id whose grant should be removed
      * @return JsonResponse            200 | 403 | 404
      */
+    /**
+     * Estimate decoding time for a stego document.
+     *
+     * Authorization: owner OR granted viewer.
+     *
+     * @param  int $id StegoDocument id
+     * @return JsonResponse
+     */
+    public function estimateDecodingTime(int $id): JsonResponse
+    {
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('viewerGrants', fn ($g) =>
+                      $g->where('viewer_user_id', $user->id)
+                  );
+            })
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $estimatedTime = $this->stegoService->estimateDecodingTime($stegoDoc->id);
+
+        return response()->json([
+            'estimated_decoding_time' => $estimatedTime,
+        ]);
+    }
+
     public function revokeGrant(Request $request, int $id, int $viewerUserId): JsonResponse
     {
         $user = Auth::user();

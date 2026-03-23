@@ -237,10 +237,19 @@ class CryptoService
             throw new Exception('Auth tag must be a base64-encoded string of ' . self::AUTH_TAG_LEN . ' bytes');
         }
 
-        // $ciphertext is raw binary reassembled from carrier chunks.
-        // $iv and $authTag are base64-encoded strings stored in stego_documents.
+        // Check if ciphertext is base64-encoded (legacy DB/local file) or raw binary (segments)
+        $ciphertextBinary = base64_decode($ciphertext, true);
+        if ($ciphertextBinary === false) {
+            // If base64 decode fails, assume it's raw binary from segments
+            $ciphertextBinary = $ciphertext;
+        }
+
+        if (empty($ciphertextBinary)) {
+            throw new Exception('Ciphertext cannot be empty');
+        }
+
         $compressed = openssl_decrypt(
-            $ciphertext,
+            $ciphertextBinary,
             self::CIPHER,
             $dekBinary,
             OPENSSL_RAW_DATA,

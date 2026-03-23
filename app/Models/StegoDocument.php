@@ -26,6 +26,7 @@ class StegoDocument extends Model
         'decoding_status',
         'decoding_error',
         'download_path',
+        'decoding_duration',
     ];
 
     protected $casts = [

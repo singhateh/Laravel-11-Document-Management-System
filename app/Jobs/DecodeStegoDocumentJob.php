@@ -88,7 +88,15 @@ class DecodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
                     'decoding_status' => 'failed',
                     'decoding_error' => substr($e->getMessage(), 0, 500),
                 ]);
-            throw $e;
+
+            $this->cleanupPartialDownload();
+
+            // Do not rethrow. With QUEUE_CONNECTION=sync, rethrowing would
+            // bubble into the HTTP request and turn a queueable decode failure
+            // into a 500 response instead of a pollable failed status.
+            if (!app()->environment('testing')) {
+                report($e);
+            }
         }
     }
 

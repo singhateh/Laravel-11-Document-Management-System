@@ -30,9 +30,7 @@ class DecodeStegoDocumentJobTest extends TestCase
 
         // Execute the job
         $job = new DecodeStegoDocumentJob(1, $stegoDoc->id, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
-        
-        // The job should fail
-        $this->expectException(\Exception::class);
+
         $job->handle($mockService);
 
         // Verify that the decoding status is updated to failed
@@ -64,9 +62,7 @@ class DecodeStegoDocumentJobTest extends TestCase
 
         // Execute the job
         $job = new DecodeStegoDocumentJob(1, $stegoDoc->id, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
-        
-        // The job should fail
-        $this->expectException(\Exception::class);
+
         $job->handle($mockService);
 
         // Verify that the partial download directory is removed

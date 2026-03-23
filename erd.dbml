@@ -212,6 +212,9 @@ Table documents {
   enc_dek_salt varchar(32)    // PBKDF2 salt for DEK derivation: 16 bytes → 32 hex chars
   enc_dek_iterations int      // PBKDF2 iteration count (stored to survive future changes)
   enc_hash_sha256 varchar(64) // SHA-256 of plaintext; verified after decryption
+  // Document watcher tracking fields
+  last_updated_at timestamp
+  last_updated_by text
   created_at timestamp
   updated_at timestamp
   deleted_at timestamp
@@ -257,6 +260,9 @@ Table tags {
 //       tags.category_id alone is sufficient for the one-to-many (category → tags) relation.
 
 // ---- Pivot Tables ----
+
+// NOTE: folder_tag and document_tag tables have been dropped and merged into
+// taggables (polymorphic M:M). See taggables table below.
 
 // MERGED: folder_tag + document_tag → taggables (polymorphic M:M)
 // Both tables were structurally identical, differing only in the left-side FK.
@@ -384,9 +390,6 @@ Table stego_carriers {
   mime_type varchar
   size bigint [not null]
   s3_key varchar
-  // FIX: s3_url dropped — transitive dependency on s3_key (3NF violation).
-  //      Derive via Storage::disk('s3')->url($s3_key) in the application layer.
-  //      A computed Eloquent accessor on StegoCarrier preserves call-site compatibility.
   // PSNR in dB measured after LSB embedding (images only; null for audio/text carriers).
   // Architecture requires PSNR >= 40 dB for image carriers.
   psnr float
@@ -421,8 +424,11 @@ Table stego_documents {
   stego_dek_salt varchar(64)    // hex-encoded DEK derivation salt
   stego_dek_iter int [default: 10000]      // PBKDF2 iteration count
   s3_key varchar
-  // FIX: s3_url dropped — transitive dependency on s3_key (3NF violation).
-  //      Derive via Storage::disk('s3')->url($s3_key) in the application layer.
+  // Decoding operation fields
+  decoding_status varchar [default: 'idle'] // idle, pending, in_progress, completed, failed
+  decoding_error text
+  download_path varchar
+  decoding_duration decimal(10,3) // Total decoding duration in seconds (with milliseconds precision)
   created_at timestamp
   updated_at timestamp
 
@@ -463,5 +469,21 @@ Table stego_document_grants {
     (stego_document_id, viewer_user_id) [unique]
     (viewer_user_id) [name: 'stego_grants_viewer_index']
     (granted_by) [name: 'stego_grants_grantor_index']
+  }
+}
+
+// ============================================================
+// DOCUMENT WATCHERS TABLE
+// ============================================================
+
+Table document_watchers {
+  id bigint [pk, increment]
+  user_id bigint [not null, ref: > users.id]
+  document_id bigint [not null, ref: > documents.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (user_id, document_id) [unique]
   }
 }

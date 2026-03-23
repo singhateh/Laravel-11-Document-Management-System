@@ -36,6 +36,7 @@ class StegoWebController extends Controller
                 'download_path',
                 'created_at',
                 'updated_at',
+                'stego_hash_sha256',
             ])
             ->with(['document:id,name,extension,size'])
             ->withCount('segments')

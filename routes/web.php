@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StegoWebController;
+use App\Http\Controllers\UserManagementController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
@@ -147,14 +148,17 @@ Route::middleware('auth')->group(function () {
         Route::post('/decode', [StegoWebController::class, 'decode'])->name('decode');
         Route::get('/tokens',  [StegoWebController::class, 'tokens'])->name('tokens');        Route::delete('/{id}', [StegoWebController::class, 'destroy'])->name('destroy');    });
 
-    // Projects and Contacts placeholder routes
-    Route::get('/projects', function () {
-        return Inertia::render('Projects/Index');
-    })->name('projects.index');
-    
-    Route::get('/contacts', function () {
-        return Inertia::render('Contacts/Index');
-    })->name('contacts.index');
+     // User management routes
+     Route::get('/users/roles', [UserManagementController::class, 'roles'])->name('users.roles');
+     
+     // Projects and Contacts placeholder routes
+     Route::get('/projects', function () {
+         return Inertia::render('Projects/Index');
+     })->name('projects.index');
+     
+     Route::get('/contacts', function () {
+         return Inertia::render('Contacts/Index');
+     })->name('contacts.index');
 });
 
 // Standalone StegoLock React SPA shell — public (SPA handles its own auth internally)
