@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
+use App\Services\NotificationService;
 use App\Services\Stego\CryptoService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -14,7 +15,10 @@ use Inertia\Response;
 
 class AuthenticatedSessionController extends Controller
 {
-    public function __construct(private readonly CryptoService $crypto) {}
+    public function __construct(
+        private readonly CryptoService $crypto,
+        private readonly NotificationService $notificationService
+    ) {}
 
     /**
      * Display the login view.
@@ -51,6 +55,9 @@ class AuthenticatedSessionController extends Controller
             );
         }
         session(['stego_mkd' => $mkdResult['masterKey']]);
+
+        // Create login notification
+        $this->notificationService->createLoginNotification();
 
         return redirect()->intended(route('dashboard', absolute: false));
     }

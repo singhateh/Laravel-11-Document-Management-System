@@ -1,11 +1,13 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\CarrierPoolController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DocumentController as ApiDocumentController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\StegoDocumentController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\NotificationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -114,6 +116,27 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
              ->name('documents.grant.revoke')
              ->whereNumber(['id', 'viewer_user_id']);
 
+         // -----------------------------------------------------------------
+         // Carrier Pool Management
+         // -----------------------------------------------------------------
+
+         // List carriers in the pool (with optional status filter)
+         Route::get('/carriers', [CarrierPoolController::class, 'index'])
+             ->name('carriers.index');
+
+         // Upload a carrier into the pool
+         Route::post('/carriers', [CarrierPoolController::class, 'store'])
+             ->name('carriers.store');
+
+         // Remove a carrier from the pool
+         Route::delete('/carriers/{id}', [CarrierPoolController::class, 'destroy'])
+             ->name('carriers.destroy')
+             ->whereNumber('id');
+
+         // Preflight check — verify pool has sufficient capacity before encoding
+         Route::post('/preflight', [StegoDocumentController::class, 'preflight'])
+             ->name('preflight');
+
      });
 
     // SPA convenience aliases
@@ -175,6 +198,16 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
              ->name('shares.revoke');
          Route::get('/shares', [\App\Http\Controllers\ShareDocumentController::class, 'listSharedDocuments'])
              ->name('shares.list');
+     });
+
+     // Notification endpoints
+     Route::prefix('notifications')->name('api.notifications.')->group(function () {
+         Route::get('/', [NotificationController::class, 'fetchNotifications'])
+             ->name('index');
+         Route::post('/{id}/read', [NotificationController::class, 'markAsRead'])
+             ->name('read');
+         Route::post('/{id}/dismiss', [NotificationController::class, 'dismiss'])
+             ->name('dismiss');
      });
 
  });

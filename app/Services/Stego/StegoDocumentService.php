@@ -4,6 +4,7 @@ namespace App\Services\Stego;
 
 use App\Models\Document;
 use App\Models\StegoDocument;
+use App\Services\Stego\CarrierPoolSelector;
 use Exception;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -40,6 +41,7 @@ class StegoDocumentService
         private readonly SegmentationService $segmentation,
         private readonly CloudStorageService $cloud,
         private readonly PersistenceService  $persistence,
+        private readonly CarrierPoolSelector $carrierPoolSelector,
     ) {}
 
     // =========================================================================
@@ -49,11 +51,12 @@ class StegoDocumentService
     /**
      * Hide a document inside one or more carrier files.
      *
-     * @param  int    $userId        Authenticated user ID
-     * @param  string $plaintext     Raw document bytes to protect
-     * @param  string $masterKey     Hex-encoded master key (from CryptoService::deriveMasterKey)
-     * @param  array  $carrierPaths  Absolute local paths to carrier files (images / binaries)
-     * @param  int|null $documentId  Optional FK to an existing documents.id record
+     * @param  int    $userId              Authenticated user ID
+     * @param  string $plaintext           Raw document bytes to protect
+     * @param  string $masterKey           Hex-encoded master key (from CryptoService::deriveMasterKey)
+     * @param  array|null $carrierPaths    Optional absolute local paths to carrier files. If null, uses carrier pool.
+     * @param  int|null $documentId        Optional FK to an existing documents.id record
+     * @param  bool   $useSystemCarriers   Whether to use system carriers as fallback
      * @return \App\Models\StegoDocument  The persisted StegoDocument with id
      * @throws Throwable
      */
@@ -61,9 +64,10 @@ class StegoDocumentService
         int $userId,
         string $plaintext,
         string $masterKey,
-        array $carrierPaths,
+        ?array $carrierPaths = null,
         ?int $documentId = null,
         ?int $existingDocId = null,
+        bool $useSystemCarriers = false,
     ): array {
         // Validate inputs
         if ($userId <= 0) {
@@ -78,26 +82,29 @@ class StegoDocumentService
             throw new Exception('Master key must be a 64-character hex string');
         }
 
-        if (empty($carrierPaths)) {
-            throw new Exception('At least one carrier file is required for encoding.');
-        }
-
-        foreach ($carrierPaths as $index => $path) {
-            if (empty($path) || !is_string($path)) {
-                throw new Exception("Carrier path at index {$index} is invalid");
+        // If carrier paths are provided, validate them
+        if ($carrierPaths !== null) {
+            if (empty($carrierPaths)) {
+                throw new Exception('At least one carrier file is required for encoding.');
             }
 
-            if (!file_exists($path)) {
-                throw new Exception("Carrier file not found: {$path}");
-            }
+            foreach ($carrierPaths as $index => $path) {
+                if (empty($path) || !is_string($path)) {
+                    throw new Exception("Carrier path at index {$index} is invalid");
+                }
 
-            if (!is_readable($path)) {
-                throw new Exception("Carrier file is not readable: {$path}");
-            }
+                if (!file_exists($path)) {
+                    throw new Exception("Carrier file not found: {$path}");
+                }
 
-            $size = filesize($path);
-            if ($size === false || $size === 0) {
-                throw new Exception("Carrier file is empty: {$path}");
+                if (!is_readable($path)) {
+                    throw new Exception("Carrier file is not readable: {$path}");
+                }
+
+                $size = filesize($path);
+                if ($size === false || $size === 0) {
+                    throw new Exception("Carrier file is empty: {$path}");
+                }
             }
         }
 
@@ -111,15 +118,27 @@ class StegoDocumentService
         $hash        = $this->crypto->hashDocument($plaintext);
 
         // -----------------------------------------------------------------
-        // Step 3: Compute carrier capacities, then split ciphertext into
-        //         fixed 2 MB chunks — one whole carrier per chunk.
+        // Step 3: Select carriers from pool or use provided paths
+        // -----------------------------------------------------------------
+        $selectedCarriers = null;
+        $carrierPathsToUse = $carrierPaths;
+
+        if ($carrierPaths === null) {
+            // Use carrier pool - select carriers based on required capacity
+            $ciphertextSize = strlen(base64_decode($encrypted['ciphertext']));
+            $selectedCarriers = $this->carrierPoolSelector->select($userId, $ciphertextSize, $useSystemCarriers);
+            $carrierPathsToUse = $selectedCarriers->map(fn($carrier) => $carrier->file_path)->toArray();
+        }
+
+        // -----------------------------------------------------------------
+        // Step 4: Compute carrier capacities, then split ciphertext into chunks
         // -----------------------------------------------------------------
         // Cache capacity by file hash — avoids re-running the Python driver for
         // the same carrier image on repeated encode calls (e.g. test/dev cycles).
         $capacities  = array_map(function ($p) {
             $cacheKey = 'stego.capacity.' . hash_file('md5', $p);
             return Cache::remember($cacheKey, 3600, fn () => $this->stego->capacity($p));
-        }, $carrierPaths);
+        }, $carrierPathsToUse);
         $segments    = $this->segmentation->split($encrypted['ciphertext'], $capacities);
         $numSegments = count($segments);
 
@@ -165,8 +184,14 @@ class StegoDocumentService
             $stegoDoc = $stegoDoc->fresh();
 
             foreach ($segments as $seg) {
-                $idx         = $seg['index'];
-                $carrierPath = $carrierPaths[$idx];
+                $idx        = $seg['index'];
+                $carrierIdx = $seg['carrier_index'] ?? $idx;
+
+                if (!isset($carrierPathsToUse[$carrierIdx])) {
+                    throw new Exception("Carrier mapping missing for segment index {$idx}.");
+                }
+
+                $carrierPath = $carrierPathsToUse[$carrierIdx];
                 $outputPath  = $tmpDir . DIRECTORY_SEPARATOR . "carrier_{$idx}_" . basename($carrierPath);
 
                 // Embed the encrypted chunk into the carrier.
@@ -180,17 +205,27 @@ class StegoDocumentService
                 $s3Key    = $this->cloud->carrierKey($userId, "doc{$stegoDoc->id}_seg{$idx}_" . basename($carrierPath));
                 $s3Result = $this->cloud->uploadFile($outputPath, $s3Key);
 
-                // Persist the carrier record.
-                $carrier = $this->persistence->createStegoCarrier([
-                    'name'        => basename($carrierPath),
-                    'file_path'   => $outputPath,
-                    'file_type'   => $this->resolveFileType($carrierPath),
-                    'mime_type'   => mime_content_type($carrierPath) ?: null,
-                    'size'        => filesize($outputPath),
-                    's3_key'      => $s3Result['s3_key'],
-                    'psnr'        => $psnrValue,
-                    'uploaded_by' => $userId,
-                ]);
+                // If using pool carriers, update the existing carrier record
+                if ($selectedCarriers !== null && isset($selectedCarriers[$carrierIdx])) {
+                    $carrier = $selectedCarriers[$carrierIdx];
+                    $carrier->update([
+                        'file_path' => $outputPath,
+                        's3_key'    => $s3Result['s3_key'],
+                        'psnr'      => $psnrValue,
+                    ]);
+                } else {
+                    // Persist the carrier record (for direct path uploads).
+                    $carrier = $this->persistence->createStegoCarrier([
+                        'name'        => basename($carrierPath),
+                        'file_path'   => $outputPath,
+                        'file_type'   => $this->resolveFileType($carrierPath),
+                        'mime_type'   => mime_content_type($carrierPath) ?: null,
+                        'size'        => filesize($outputPath),
+                        's3_key'      => $s3Result['s3_key'],
+                        'psnr'        => $psnrValue,
+                        'uploaded_by' => $userId,
+                    ]);
+                }
 
                 $carrierRecords[] = $carrier;
 
@@ -206,6 +241,8 @@ class StegoDocumentService
                     'chunk_hash'        => $seg['hash'],
                 ];
             }
+
+            $this->enforceAggregatePsnrThreshold($qualityMetrics);
 
             // Bulk-persist all segments in one transaction.
             $this->persistence->createStegoSegments($segmentRecords);
@@ -397,7 +434,7 @@ class StegoDocumentService
     /**
      * Measure PSNR for an image carrier after embedding.
      * Returns null for non-image carriers (PSNR is not meaningful there).
-     * Throws Exception if measured PSNR falls below 40 dB.
+    * Throws Exception if measured PSNR falls below configured threshold.
      *
      * @throws Exception
      */
@@ -411,16 +448,20 @@ class StegoDocumentService
 
         $metrics = $this->stego->psnr($carrierPath, $outputPath);
 
-        if (!$metrics['threshold_40db']) {
+        $threshold = (float) config('stegolock.carrier_pool.psnr_threshold', 40.0);
+        $psnr = (float) ($metrics['psnr'] ?? 0.0);
+
+        if ($psnr < $threshold) {
             throw new Exception(sprintf(
-                'Carrier "%s": PSNR %.2f dB is below the 40 dB imperceptibility threshold. '
+                'Carrier "%s": PSNR %.2f dB is below the %.2f dB imperceptibility threshold. '
                 . 'Choose a larger carrier image.',
                 basename($carrierPath),
-                $metrics['psnr']
+                $psnr,
+                $threshold
             ));
         }
 
-        return (float) $metrics['psnr'];
+        return $psnr;
     }
 
     /**
@@ -428,11 +469,45 @@ class StegoDocumentService
      */
     private function buildQualityMetric(string $carrierPath, ?float $psnr): array
     {
+        $threshold = (float) config('stegolock.carrier_pool.psnr_threshold', 40.0);
+
         return [
-            'carrier'        => basename($carrierPath),
-            'psnr'           => $psnr,
-            'threshold_40db' => $psnr !== null ? ($psnr >= 40.0) : null,
+            'carrier'          => basename($carrierPath),
+            'psnr'             => $psnr,
+            'threshold_db'     => $threshold,
+            'passed_threshold' => $psnr !== null ? ($psnr >= $threshold) : null,
+            // Backward compatibility for existing API consumers.
+            'threshold_40db'   => $psnr !== null ? ($psnr >= 40.0) : null,
         ];
+    }
+
+    /**
+     * Additional PSNR safety guard for concentrated bin-packing payloads.
+     *
+     * @param array<int, array{carrier: string, psnr: ?float, threshold_db?: float}> $qualityMetrics
+     * @throws Exception
+     */
+    private function enforceAggregatePsnrThreshold(array $qualityMetrics): void
+    {
+        $imageMetrics = array_values(array_filter(
+            $qualityMetrics,
+            fn (array $metric): bool => isset($metric['psnr']) && $metric['psnr'] !== null
+        ));
+
+        if (empty($imageMetrics)) {
+            return;
+        }
+
+        $avgThreshold = (float) config('stegolock.carrier_pool.encode_average_psnr_threshold', 41.0);
+        $avgPsnr = array_sum(array_map(fn (array $metric): float => (float) $metric['psnr'], $imageMetrics)) / count($imageMetrics);
+
+        if ($avgPsnr < $avgThreshold) {
+            throw new Exception(sprintf(
+                'Average PSNR %.2f dB is below the %.2f dB encode safety threshold. Choose larger carriers.',
+                $avgPsnr,
+                $avgThreshold
+            ));
+        }
     }
 
     private function resolveFileType(string $path): string

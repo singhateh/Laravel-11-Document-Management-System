@@ -31,6 +31,11 @@ class NotificationController extends Controller
 
         session()->put('notifications', $notifications);
 
+        // Return JSON response for API calls
+        if (request()->expectsJson()) {
+            return response()->json(['notifications' => $notifications]);
+        }
+
         // Render notifications view
         $view = view('notifications.fetch', compact('notifications'))->render();
 
@@ -116,5 +121,20 @@ class NotificationController extends Controller
         // } catch (\Exception $e) {
         //     return response()->json(['message' => 'An error occurred while processing the request'], 500);
         // }
+    }
+
+    public function markAsRead(Request $request, Notification $notification)
+    {
+        try {
+            $notification->update(['status' => 'READ']);
+
+            // Clear the cache
+            $cacheKey = 'notifications';
+            Cache::forget($cacheKey);
+
+            return response()->json(['message' => 'Notification marked as read']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'An error occurred while processing the request'], 500);
+        }
     }
 }

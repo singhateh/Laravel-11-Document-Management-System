@@ -7,6 +7,7 @@ use App\Http\Concerns\HasStegoEncoding;
 use App\Jobs\EncodeStegoDocumentJob;
 use App\Jobs\DecodeStegoDocumentJob;
 use App\Models\Document;
+use App\Models\StegoCarrier;
 use App\Models\StegoDocument;
 use App\Models\StegoDocumentGrant;
 use App\Models\User;
@@ -202,9 +203,11 @@ class StegoDocumentController extends Controller
             ], 401);
         }
 
+        $useSystemCarriers = $request->input('use_system_carriers', false);
+
         $request->validate([
             'document_id' => ['required', 'integer', 'exists:documents,id'],
-            'carriers'    => ['required', 'array', 'min:1'],
+            'carriers'    => [$useSystemCarriers ? 'nullable' : 'required', 'array', 'min:1'],
             'carriers.*'  => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:102400'],
         ]);
 
@@ -226,7 +229,13 @@ class StegoDocumentController extends Controller
 
         // Stage plaintext + carriers to persistent storage so the queue
         // worker can read them after the HTTP request has ended.
-        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $request->file('carriers'));
+        $carrierFiles = $request->file('carriers');
+        if ($useSystemCarriers && empty($carrierFiles)) {
+            // When using system carriers only, pass empty array
+            $carrierPaths = [];
+        } else {
+            [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $carrierFiles);
+        }
 
         EncodeStegoDocumentJob::dispatch(
             $user->id,
@@ -235,6 +244,7 @@ class StegoDocumentController extends Controller
             $carrierPaths,
             $document->id,
             $pending->id,
+            $useSystemCarriers,
         );
 
         return response()->json([
@@ -487,6 +497,56 @@ class StegoDocumentController extends Controller
      * @param  int     $viewerUserId   User id whose grant should be removed
      * @return JsonResponse            200 | 403 | 404
      */
+    /**
+     * Preflight check for encoding a document.
+     *
+     * Checks if the user has enough valid carriers in their pool to encode
+     * a document of the given size. Returns carrier availability status.
+     *
+     * @param  Request $request  { document_id: int }
+     * @return JsonResponse      200 { can_encode, required_bytes, available_bytes, valid_carriers, message }
+     */
+    public function preflight(Request $request): JsonResponse
+    {
+        $request->validate([
+            'document_id' => ['required', 'integer', 'exists:documents,id'],
+        ]);
+
+        $user = Auth::user();
+        $document = Document::findOrFail($request->document_id);
+
+        // Read document to estimate size
+        try {
+            $plaintext = $this->readDocumentPlaintext($document);
+            $requiredBytes = strlen($plaintext);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        // Get available carriers from pool
+        $availableCarriers = StegoCarrier::where('uploaded_by', $user->id)
+            ->where('validation_status', 'valid')
+            ->where('is_in_use', false)
+            ->get();
+
+        $availableBytes = $availableCarriers->sum('capacity_bytes');
+        $validCarrierCount = $availableCarriers->count();
+
+        $canEncode = $availableBytes >= $requiredBytes;
+
+        return response()->json([
+            'can_encode' => $canEncode,
+            'required_bytes' => $requiredBytes,
+            'available_bytes' => $availableBytes,
+            'valid_carriers' => $validCarrierCount,
+            'message' => $canEncode
+                ? 'Sufficient carrier capacity available.'
+                : 'Insufficient carrier capacity. Please upload more carriers.',
+        ]);
+    }
+
     /**
      * Estimate decoding time for a stego document.
      *
