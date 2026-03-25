@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\StegoCarrier;
 use App\Models\StegoDocument;
 use App\Services\Stego\StegoDocumentService;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
@@ -81,6 +82,12 @@ class DecodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
                 'decoding_status' => 'completed',
                 'download_path' => $downloadPath,
             ]);
+
+            // Decoding is complete, so release carriers back to the pool.
+            $carrierIds = $stegoDoc->segments()->pluck('stego_carrier_id')->all();
+            if (!empty($carrierIds)) {
+                StegoCarrier::whereIn('id', $carrierIds)->update(['is_in_use' => false]);
+            }
         } catch (\Throwable $e) {
             // Update stego document status to indicate decoding failed
             StegoDocument::where('id', $this->stegoDocumentId)

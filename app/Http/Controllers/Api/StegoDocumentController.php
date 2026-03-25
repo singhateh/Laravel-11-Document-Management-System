@@ -203,12 +203,12 @@ class StegoDocumentController extends Controller
             ], 401);
         }
 
-        $useSystemCarriers = $request->input('use_system_carriers', false);
+        $useSystemCarriers = $request->boolean('use_system_carriers');
 
         $request->validate([
             'document_id' => ['required', 'integer', 'exists:documents,id'],
-            'carriers'    => [$useSystemCarriers ? 'nullable' : 'required', 'array', 'min:1'],
-            'carriers.*'  => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:102400'],
+            'carriers'    => ['nullable', 'array'],
+            'carriers.*'  => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:102400'],
         ]);
 
         $user     = Auth::user();
@@ -229,13 +229,14 @@ class StegoDocumentController extends Controller
 
         // Stage plaintext + carriers to persistent storage so the queue
         // worker can read them after the HTTP request has ended.
-        $carrierFiles = $request->file('carriers');
-        if ($useSystemCarriers && empty($carrierFiles)) {
-            // When using system carriers only, pass empty array
-            $carrierPaths = [];
-        } else {
-            [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $carrierFiles);
+        $carrierFiles = $request->file('carriers', []);
+        if (!is_array($carrierFiles)) {
+            $carrierFiles = [$carrierFiles];
         }
+
+        // Always stage plaintext so the queue worker can read it.
+        // Carrier files may be empty when using pool/system fallback only.
+        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $carrierFiles);
 
         EncodeStegoDocumentJob::dispatch(
             $user->id,
@@ -510,9 +511,11 @@ class StegoDocumentController extends Controller
     {
         $request->validate([
             'document_id' => ['required', 'integer', 'exists:documents,id'],
+            'use_system_carriers' => ['nullable', 'boolean'],
         ]);
 
         $user = Auth::user();
+        $useSystemCarriers = (bool) $request->boolean('use_system_carriers');
         $document = Document::findOrFail($request->document_id);
 
         // Read document to estimate size
@@ -531,8 +534,21 @@ class StegoDocumentController extends Controller
             ->where('is_in_use', false)
             ->get();
 
-        $availableBytes = $availableCarriers->sum('capacity_bytes');
+        $userPoolBytes = $availableCarriers->sum('capacity_bytes');
         $validCarrierCount = $availableCarriers->count();
+
+        $systemPoolBytes = 0;
+        if ($useSystemCarriers) {
+            $adminId = User::where('role', 'admin')->value('id');
+            if ($adminId) {
+                $systemPoolBytes = StegoCarrier::where('uploaded_by', $adminId)
+                    ->where('validation_status', 'valid')
+                    ->where('is_in_use', false)
+                    ->sum('capacity_bytes');
+            }
+        }
+
+        $availableBytes = $userPoolBytes + $systemPoolBytes;
 
         $canEncode = $availableBytes >= $requiredBytes;
 
@@ -540,6 +556,8 @@ class StegoDocumentController extends Controller
             'can_encode' => $canEncode,
             'required_bytes' => $requiredBytes,
             'available_bytes' => $availableBytes,
+            'user_pool_bytes' => $userPoolBytes,
+            'system_pool_bytes' => $systemPoolBytes,
             'valid_carriers' => $validCarrierCount,
             'message' => $canEncode
                 ? 'Sufficient carrier capacity available.'

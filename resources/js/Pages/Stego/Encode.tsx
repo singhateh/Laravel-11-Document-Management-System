@@ -2,20 +2,22 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, useForm, usePage } from '@inertiajs/react';
 import { PageProps } from '@/types';
 import { FormEvent, useEffect, useRef, useState } from 'react';
+import { 
+  estimateCarriersNeeded, 
+  MIN_IMAGE_DIMENSION, 
+  dataNeededBytes, 
+  formatBytes, 
+  calculateAverageCarrierCapacity 
+} from '@/utils/carrierCalculations';
+import { useCarrierPool } from '@/hooks/useCarrierPool';
+import { usePreflightVerification } from '@/hooks/usePreflightVerification';
+import { useCarrierManagement, CarrierInfo } from '@/hooks/useCarrierManagement';
 
 interface Document {
     id: number;
     name: string;
     extension: string;
     size: number;
-}
-
-interface CarrierInfo {
-    file: File;
-    width?: number;
-    height?: number;
-    capacity?: number;  // usable LSB bytes
-    loading: boolean;
 }
 
 interface SystemCarrierInfo {
@@ -43,71 +45,61 @@ interface EncodeProps extends PageProps {
 
 type Step = 1 | 2;
 
-// ---------------------------------------------------------------------------
-// Carrier requirement helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Estimate how many carrier images a document requires after the
- * gzip + base64 encoding pipeline (compression ratio ≈ 0.4).
- *
- * Note: Dynamic chunk sizing now distributes payload evenly across all carriers,
- * so this is just a rough estimate. Actual requirements depend on carrier capacities.
- */
-const estimateCarriersNeeded = (fileSizeBytes: number): number => {
-    const compressionRatio = 0.4;              // gzip typically ≈ 60% reduction
-    const base64Overhead   = 4 / 3;            // base64 expands binary by 33%
-    const avgChunkSize     = 1.5 * 1024 * 1024; // Average chunk size (1.5 MB) for estimate
-    const estimatedSize    = fileSizeBytes * compressionRatio * base64Overhead;
-    return Math.max(1, Math.ceil(estimatedSize / avgChunkSize));
-};
-
-/** Minimum square-image side length (px) needed to hide a 1.5 MB chunk via LSB (for estimation purposes). */
-const MIN_IMAGE_DIMENSION = Math.ceil(Math.sqrt((1.5 * 1024 * 1024 * 8) / 3)); // ≈ 1132 px
-
-/** Usable LSB capacity of a carrier image in bytes (mirrors python/stego_lsb.py). */
-const carrierCapacity = (w: number, h: number): number =>
-    Math.max(0, Math.floor((w * h * 3) / 8) - 4) * 0.75;
-
-/** Estimated bytes needed to encode a document (gzip 0.4 × base64 4/3 pipeline). */
-const dataNeededBytes = (fileSizeBytes: number): number =>
-    fileSizeBytes * 0.4 * (4 / 3);
-
-/** Format bytes to human-readable string */
-const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
-
-/** Calculate average carrier capacity from loaded carriers */
-const calculateAverageCarrierCapacity = (carriers: CarrierInfo[]): number => {
-    const loadedCarriers = carriers.filter(c => c.capacity !== undefined && c.capacity > 0);
-    if (loadedCarriers.length === 0) return 0;
-    const totalCapacity = loadedCarriers.reduce((sum, c) => sum + (c.capacity ?? 0), 0);
-    return totalCapacity / loadedCarriers.length;
-};
-
 export default function Encode({ auth, documents, systemCarriers = [], errors = {} }: EncodeProps) {
     const [step, setStep] = useState<Step>(1);
-    const [carriers, setCarriers] = useState<CarrierInfo[]>([]);
-    const [dragOver, setDragOver] = useState(false);
     const [successMsg, setSuccessMsg] = useState<string | null>(null);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [useSystemCarriers, setUseSystemCarriers] = useState(false);
-    const [preflightErrors, setPreflightErrors] = useState<string[]>([]);
-    const [preflightRecommendations, setPreflightRecommendations] = useState<string[]>([]);
-    const [showPreflight, setShowPreflight] = useState(false);
     const [selectedCarriers, setSelectedCarriers] = useState<CarrierInfo[]>([]);
     const [isSelectingCarriers, setIsSelectingCarriers] = useState(false);
-    const [poolCarriers, setPoolCarriers] = useState<PoolCarrierInfo[]>([]);
-    const [isLoadingPool, setIsLoadingPool] = useState(false);
-    const [autoSelectedCarriers, setAutoSelectedCarriers] = useState<PoolCarrierInfo[]>([]);
-    const [isAutoSelecting, setIsAutoSelecting] = useState(false);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const autoSelectContextRef = useRef<string | null>(null);
+    const previousDocumentIdRef = useRef<string>('');
     const { flash } = usePage<{ flash: { success?: string; error?: string } }>().props;
+
+    const { data, setData, post, processing, reset } = useForm<{
+        document_id: string;
+        carriers: File[];
+        use_system_carriers: boolean;
+    }>({
+        document_id: '',
+        carriers: [],
+        use_system_carriers: false,
+    });
+
+    const {
+        carriers,
+        setCarriers,
+        dragOver,
+        setDragOver,
+        fileInputRef,
+        removeCarrier,
+        addFiles,
+        handleDrop,
+        totalCapacity,
+        allLoaded,
+    } = useCarrierManagement(setErrorMsg, (updatedCarriers) => {
+        setData('carriers', updatedCarriers.map((c) => c.file));
+    });
+    
+    // Carrier pool hook
+    const {
+      poolCarriers,
+      isLoadingPool,
+      autoSelectedCarriers,
+      isAutoSelecting,
+      fetchCarrierPool,
+      autoSelectCarriersFromPool,
+      clearAutoSelection
+    } = useCarrierPool();
+    
+    // Preflight verification hook
+    const {
+      preflightErrors,
+      preflightRecommendations,
+      showPreflight,
+      handlePreflightCheck: handlePreflightCheckFromHook,
+      clearPreflight
+    } = usePreflightVerification();
 
     // Show flash messages from server redirects (e.g. after successful encode)
     useEffect(() => {
@@ -131,231 +123,45 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
         fetchCarrierPool();
     }, []);
 
-    const { data, setData, post, processing, reset } = useForm<{
-        document_id: string;
-        carriers: File[];
-    }>({
-        document_id: '',
-        carriers: [],
+    useEffect(() => {
+        if (
+            previousDocumentIdRef.current &&
+            previousDocumentIdRef.current !== data.document_id
+        ) {
+            clearAutoSelection();
+            setSelectedCarriers([]);
+            autoSelectContextRef.current = null;
+        }
+        previousDocumentIdRef.current = data.document_id;
+    }, [data.document_id, clearAutoSelection]);
+
+    // Helper function to get preflight verification parameters
+    const getPreflightParams = () => ({
+        documentId: data.document_id,
+        carriers,
+        autoSelectedCarriers,
+        useSystemCarriers,
+        systemCarriers,
+        selectedDoc,
+        dataNeeded,
+        effectiveCapacity,
+        allLoaded,
+        poolCarriers,
+        calculateAverageCarrierCapacity
     });
 
-    const removeCarrier = (idx: number) => {
-        const updated = carriers.filter((_, i) => i !== idx);
-        setCarriers(updated);
-        setData('carriers', updated.map((c) => c.file));
+    const handlePreflightCheck = async () => {
+        await handlePreflightCheckFromHook(getPreflightParams());
     };
 
-    const addFiles = (files: FileList | null) => {
-        if (!files) return;
-        const validFiles = Array.from(files).filter((f) =>
-            /\.(png|bmp|jpe?g)$/i.test(f.name) && f.size <= 100 * 1024 * 1024
-        );
-        const invalidFiles = Array.from(files).filter((f) =>
-            !/\.(png|bmp|jpe?g)$/i.test(f.name) || f.size > 100 * 1024 * 1024
-        );
-        if (invalidFiles.length > 0) {
-            const errorMessages = [];
-            const invalidTypes = invalidFiles.filter(f => !/\.(png|bmp|jpe?g)$/i.test(f.name));
-            const oversizedFiles = invalidFiles.filter(f => f.size > 100 * 1024 * 1024);
-            if (invalidTypes.length > 0) {
-                errorMessages.push(`Invalid file type(s): ${invalidTypes.map(f => f.name).join(', ')} (only PNG, BMP, JPEG allowed)`);
-            }
-            if (oversizedFiles.length > 0) {
-                errorMessages.push(`File(s) too large: ${oversizedFiles.map(f => f.name).join(', ')} (max 100 MB)`);
-            }
-            setErrorMsg(errorMessages.join('. '));
-        }
-        if (validFiles.length === 0) return;
-
-        // Add loading placeholders immediately so spinners appear right away
-        const newEntries: CarrierInfo[] = validFiles.map((f) => ({ file: f, loading: true }));
-        setCarriers((prev) => {
-            const updated = [...prev, ...newEntries];
-            setData('carriers', updated.map((c) => c.file));
-            return updated;
-        });
-
-        // Async: read pixel dimensions for each file, then compute capacity
-        validFiles.forEach((f) => {
-            const url = URL.createObjectURL(f);
-            const img = new Image();
-            img.onload = () => {
-                const cap = carrierCapacity(img.naturalWidth, img.naturalHeight);
-                URL.revokeObjectURL(url);
-                setCarriers((prev) =>
-                    prev.map((c) =>
-                        c.file === f
-                            ? { ...c, width: img.naturalWidth, height: img.naturalHeight, capacity: cap, loading: false }
-                            : c
-                    )
-                );
-            };
-            img.onerror = () => {
-                URL.revokeObjectURL(url);
-                setCarriers((prev) =>
-                    prev.map((c) => (c.file === f ? { ...c, loading: false } : c))
-                );
-            };
-            img.src = url;
-        });
-    };
-
-    const handleDrop = (e: React.DragEvent) => {
-        e.preventDefault();
-        setDragOver(false);
-        addFiles(e.dataTransfer.files);
-    };
-
-    // Fetch user's carrier pool from API
-    const fetchCarrierPool = async () => {
-        setIsLoadingPool(true);
-        try {
-            const response = await fetch('/api/stego/carriers?status=valid', {
-                headers: {
-                    'Authorization': `Bearer ${document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')}`,
-                    'Accept': 'application/json',
-                },
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                setPoolCarriers(data.data || []);
-            }
-        } catch (error) {
-            console.error('Failed to fetch carrier pool:', error);
-        } finally {
-            setIsLoadingPool(false);
-        }
-    };
-
-    // Auto-select carriers from pool based on document requirements
-    const autoSelectCarriersFromPool = () => {
-        if (!selectedDoc || poolCarriers.length === 0) return;
-
-        setIsAutoSelecting(true);
-        
-        // Simulate selection process (in reality, this happens on backend)
-        setTimeout(() => {
-            // Filter valid carriers that are not in use
-            const availableCarriers = poolCarriers.filter(
-                c => c.validation_status === 'valid' && !c.is_in_use && c.capacity_bytes > 0
-            );
-            
-            // Sort by capacity (largest first) - greedy bin-packing
-            const sortedCarriers = [...availableCarriers].sort(
-                (a, b) => b.capacity_bytes - a.capacity_bytes
-            );
-            
-            // Select carriers until we have enough capacity
-            const selected: PoolCarrierInfo[] = [];
-            let accumulatedCapacity = 0;
-            const neededCapacity = dataNeeded;
-            
-            for (const carrier of sortedCarriers) {
-                if (accumulatedCapacity >= neededCapacity) break;
-                selected.push(carrier);
-                accumulatedCapacity += carrier.capacity_bytes;
-            }
-            
-            setAutoSelectedCarriers(selected);
-            setIsAutoSelecting(false);
-            
-            // Show success message
-            if (selected.length > 0) {
-                setSuccessMsg(`✅ Auto-selected ${selected.length} carrier(s) with total capacity of ${formatBytes(accumulatedCapacity)}`);
-            } else {
-                setErrorMsg('No suitable carriers found in your pool. Please upload carriers or enable system carriers.');
-            }
-        }, 500);
-    };
-
-    // Clear auto-selected carriers
-    const clearAutoSelection = () => {
-        setAutoSelectedCarriers([]);
-    };
-
-    const runPreflightVerification = () => {
-        const errors: string[] = [];
-        const recommendations: string[] = [];
-
-        // Check 1: Document selected
-        if (!data.document_id) {
-            errors.push('Please select a document to encode');
-        }
-
-        // Check 2: Carriers provided (if not using system carriers or auto-selected carriers)
-        const hasAutoSelectedCapacity = autoSelectedCarriers.reduce((sum, c) => sum + c.capacity_bytes, 0) >= dataNeeded;
-        if (!useSystemCarriers && carriers.length === 0 && autoSelectedCarriers.length === 0) {
-            errors.push('Please upload carrier images, auto-select from pool, or enable system carrier pool');
-        }
-
-        // Check 3: Capacity sufficient
-        const autoSelectedCapacity = autoSelectedCarriers.reduce((sum, c) => sum + c.capacity_bytes, 0);
-        const totalEffectiveCapacity = effectiveCapacity + autoSelectedCapacity;
-        if (selectedDoc && totalEffectiveCapacity < dataNeeded) {
-            const shortage = dataNeeded - totalEffectiveCapacity;
-            const avgCapacity = calculateAverageCarrierCapacity(carriers);
-            const additionalNeeded = avgCapacity > 0 ? Math.ceil(shortage / avgCapacity) : 1;
-
-            errors.push('Insufficient carrier capacity for selected document');
-            recommendations.push(
-                `Add approximately ${additionalNeeded} more carrier image(s) to meet requirements`
-            );
-
-            // Provide specific recommendations based on carrier pool stats
-            if (systemCarriers.length > 0) {
-                const validSystemCarriers = systemCarriers.filter(c => c.capacity_bytes > 0);
-                if (validSystemCarriers.length > 0) {
-                    recommendations.push(
-                        `Consider enabling system carrier pool to access ${validSystemCarriers.length} pre-validated carriers`
-                    );
-                }
-            }
-            
-            // Provide recommendation for auto-selection
-            if (poolCarriers.length > 0 && autoSelectedCarriers.length === 0) {
-                recommendations.push(
-                    `Consider using auto-select to choose ${poolCarriers.length} carrier(s) from your pool`
-                );
-            }
-        }
-
-        // Check 4: Carrier validation status
-        const invalidCarriers = carriers.filter(c => c.capacity === 0);
-        if (invalidCarriers.length > 0) {
-            errors.push(`${invalidCarriers.length} carrier(s) are too small and cannot be used`);
-        }
-
-        // Check 5: All carriers loaded
-        if (carriers.length > 0 && !allLoaded) {
-            errors.push('Please wait for all carrier images to finish loading');
-        }
-
-        return {
-            passed: errors.length === 0,
-            errors,
-            recommendations
-        };
-    };
-
-    const handlePreflightCheck = () => {
-        const verification = runPreflightVerification();
-        setPreflightErrors(verification.errors);
-        setPreflightRecommendations(verification.recommendations);
-        setShowPreflight(true);
-    };
-
-    const handleSubmit = (e: FormEvent) => {
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
         setErrorMsg(null);
         setSuccessMsg(null);
         
         // Run preflight verification
-        const verification = runPreflightVerification();
+        const verification = await handlePreflightCheckFromHook(getPreflightParams());
         if (!verification.passed) {
-            setPreflightErrors(verification.errors);
-            setPreflightRecommendations(verification.recommendations);
-            setShowPreflight(true);
             return;
         }
         
@@ -382,14 +188,6 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
             setIsSelectingCarriers(false);
         }, 500);
         
-        // Add use_system_carriers to form data
-        const formData = new FormData();
-        formData.append('document_id', data.document_id);
-        formData.append('use_system_carriers', useSystemCarriers ? '1' : '0');
-        carriers.forEach((c, i) => {
-            formData.append(`carriers[${i}]`, c.file);
-        });
-        
         post(route('stego.encode'), {
             forceFormData: true,
             preserveState: true,
@@ -397,12 +195,11 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                 const totalCarriers = carriers.length + autoSelectedCarriers.length;
                 setSuccessMsg(`✅ Document encoded and hidden in ${totalCarriers} carrier(s) successfully!`);
                 setCarriers([]);
-                setAutoSelectedCarriers([]);
+                clearAutoSelection();
                 reset();
+                setUseSystemCarriers(false);
                 setStep(1);
-                setShowPreflight(false);
-                setPreflightErrors([]);
-                setPreflightRecommendations([]);
+                clearPreflight();
                 setSelectedCarriers([]);
             },
             onError: (errs) => {
@@ -419,15 +216,48 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
 
     const selectedDoc   = documents.find((d) => String(d.id) === data.document_id);
     const dataNeeded    = selectedDoc ? dataNeededBytes(selectedDoc.size) : 0;
-    const totalCapacity = carriers.reduce((sum, c) => sum + (c.capacity ?? 0), 0);
-    const allLoaded     = carriers.length > 0 && carriers.every((c) => !c.loading);
+    const hasManualCarriers = carriers.length > 0;
     const systemCapacity = systemCarriers.reduce((sum, c) => sum + c.capacity_bytes, 0);
     const autoSelectedCapacity = autoSelectedCarriers.reduce((sum, c) => sum + c.capacity_bytes, 0);
+    const poolAvailableCapacity = poolCarriers
+        .filter((c) => c.validation_status === 'valid' && !c.is_in_use && c.capacity_bytes > 0)
+        .reduce((sum, c) => sum + c.capacity_bytes, 0);
+    const poolCanCoverDocument = !!selectedDoc && poolAvailableCapacity >= dataNeeded;
+    const poolFirstMode = !!selectedDoc && !hasManualCarriers && poolCanCoverDocument;
+    const hideManualUploader = poolFirstMode;
     const effectiveCapacity = useSystemCarriers ? totalCapacity + systemCapacity + autoSelectedCapacity : totalCapacity + autoSelectedCapacity;
-    const capacityOk    = allLoaded && effectiveCapacity >= dataNeeded;
+    const capacityOk    = (hasManualCarriers ? allLoaded : true) && effectiveCapacity >= dataNeeded;
 
     const canGoNext1 = !!data.document_id;
     const canSubmit  = canGoNext1 && (carriers.length > 0 || useSystemCarriers || autoSelectedCarriers.length > 0) && capacityOk;
+
+    useEffect(() => {
+        if (!poolFirstMode || !selectedDoc) {
+            autoSelectContextRef.current = null;
+            return;
+        }
+
+        if (autoSelectedCapacity >= dataNeeded) {
+            return;
+        }
+
+        const contextKey = `${data.document_id}:${dataNeeded}:${poolCarriers.length}`;
+        if (autoSelectContextRef.current === contextKey || isAutoSelecting) {
+            return;
+        }
+
+        autoSelectContextRef.current = contextKey;
+        autoSelectCarriersFromPool(selectedDoc, dataNeeded);
+    }, [
+        poolFirstMode,
+        selectedDoc,
+        autoSelectedCapacity,
+        dataNeeded,
+        data.document_id,
+        poolCarriers.length,
+        isAutoSelecting,
+        autoSelectCarriersFromPool,
+    ]);
 
     const steps: { label: string; icon: string }[] = [
         { label: 'Select Document', icon: '📄' },
@@ -632,6 +462,68 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                             </div>
                                         </div>
                                     )}
+
+                                    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                                            <input
+                                                type="checkbox"
+                                                checked={useSystemCarriers}
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setUseSystemCarriers(checked);
+                                                    setData('use_system_carriers', checked);
+                                                }}
+                                                className="h-4 w-4 rounded border-gray-300 text-indigo-600"
+                                            />
+                                            Enable system carrier fallback
+                                        </label>
+
+                                        {!poolFirstMode && (
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => autoSelectCarriersFromPool(selectedDoc ?? null, dataNeeded)}
+                                                    disabled={!selectedDoc || isAutoSelecting || isLoadingPool}
+                                                    className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"
+                                                >
+                                                    {isAutoSelecting ? 'Selecting from pool…' : 'Auto-select from pool'}
+                                                </button>
+                                                {autoSelectedCarriers.length > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={clearAutoSelection}
+                                                        className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+                                                    >
+                                                        Clear auto-selected
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {poolFirstMode && (
+                                            <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                                                <div className="flex items-start gap-2">
+                                                    <span className="text-lg">🤖</span>
+                                                    <div>
+                                                        <p className="text-sm font-medium text-indigo-800">
+                                                            Pool-first mode is active
+                                                        </p>
+                                                        <p className="text-sm text-indigo-700 mt-1">
+                                                            Your pool has enough capacity for this document, so manual upload is hidden.
+                                                        </p>
+                                                        {isAutoSelecting && (
+                                                            <p className="text-sm text-indigo-700 mt-1">Selecting optimal carriers from pool…</p>
+                                                        )}
+                                                        {!isAutoSelecting && autoSelectedCapacity >= dataNeeded && (
+                                                            <p className="text-sm text-indigo-700 mt-1">
+                                                                Auto-selected {autoSelectedCarriers.length} carrier(s) with {formatBytes(autoSelectedCapacity)} capacity.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                     
                                     {/* Encoding summary */}
                                     {(() => {
@@ -668,34 +560,35 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                             </div>
                                         );
                                     })()}
-                                    {/* Drop zone */}
-                                    <div
-                                        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                                        onDragLeave={() => setDragOver(false)}
-                                        onDrop={handleDrop}
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
-                                            dragOver
-                                                ? 'border-indigo-500 bg-indigo-50'
-                                                : 'border-gray-300 hover:border-indigo-400'
-                                        }`}
-                                    >
-                                        <div className="text-4xl mb-2">🖼️</div>
-                                        <p className="text-sm text-gray-600">
-                                            Drag & drop PNG/BMP/JPEG files here, or{' '}
-                                            <span className="text-indigo-600 underline">click to browse</span>
-                                        </p>
-                                        <input
-                                            ref={fileInputRef}
-                                            type="file"
-                                            accept=".png,.bmp,.jpg,.jpeg"
-                                            multiple
-                                            className="hidden"
-                                            onChange={(e) => addFiles(e.target.files)}
-                                        />
-                                    </div>
+                                    {!hideManualUploader && (
+                                        <div
+                                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                                            onDragLeave={() => setDragOver(false)}
+                                            onDrop={handleDrop}
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
+                                                dragOver
+                                                    ? 'border-indigo-500 bg-indigo-50'
+                                                    : 'border-gray-300 hover:border-indigo-400'
+                                            }`}
+                                        >
+                                            <div className="text-4xl mb-2">🖼️</div>
+                                            <p className="text-sm text-gray-600">
+                                                Drag & drop PNG/BMP/JPEG files here, or{' '}
+                                                <span className="text-indigo-600 underline">click to browse</span>
+                                            </p>
+                                            <input
+                                                ref={fileInputRef}
+                                                type="file"
+                                                accept=".png,.bmp,.jpg,.jpeg"
+                                                multiple
+                                                className="hidden"
+                                                onChange={(e) => addFiles(e.target.files)}
+                                            />
+                                        </div>
+                                    )}
                                     
-                                    {systemCarriers.length === 0 && (
+                                    {!hideManualUploader && systemCarriers.length === 0 && (
                                         <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
                                             <div className="flex items-start gap-2">
                                                 <span className="text-lg">⚠️</span>
@@ -892,7 +785,7 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                             {/* Preflight Verification Button */}
                                             <button
                                                 type="button"
-                                                onClick={handlePreflightCheck}
+                                                onClick={() => void handlePreflightCheck()}
                                                 className="w-full flex items-center justify-center gap-2 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 transition-colors"
                                             >
                                                 <span>🔍</span>

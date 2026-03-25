@@ -71,12 +71,12 @@ class StegoWebController extends Controller
 
     public function encode(Request $request)
     {
-        $useSystemCarriers = $request->input('use_system_carriers', false);
+        $useSystemCarriers = $request->boolean('use_system_carriers');
 
         $request->validate([
             'document_id'  => ['required', 'integer', 'exists:documents,id'],
-            'carriers'     => [$useSystemCarriers ? 'nullable' : 'required', 'array', 'min:1'],
-            'carriers.*'   => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
+            'carriers'     => ['nullable', 'array'],
+            'carriers.*'   => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
         ]);
 
         // Master Key is derived at login and kept server-side only.
@@ -99,7 +99,12 @@ class StegoWebController extends Controller
             return back()->withErrors(['document_id' => $e->getMessage()]);
         }
 
-        $carrierPaths = $this->storeCarriersTmp($request->file('carriers'));
+        $carrierFiles = $request->file('carriers', []);
+        if (!is_array($carrierFiles)) {
+            $carrierFiles = [$carrierFiles];
+        }
+
+        $carrierPaths = empty($carrierFiles) ? null : $this->storeCarriersTmp($carrierFiles);
 
         try {
             $result   = $this->stegoService->encode(
@@ -118,7 +123,7 @@ class StegoWebController extends Controller
         } catch (\Exception $e) {
             return back()->withErrors(['encode' => 'Encoding failed: ' . $e->getMessage()]);
         } finally {
-            $this->releaseCarriers($carrierPaths);
+            $this->releaseCarriers($carrierPaths ?? []);
         }
     }
 

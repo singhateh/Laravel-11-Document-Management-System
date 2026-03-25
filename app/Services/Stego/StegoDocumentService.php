@@ -121,26 +121,38 @@ class StegoDocumentService
         // Step 3: Select carriers from pool or use provided paths
         // -----------------------------------------------------------------
         $selectedCarriers = null;
+        $carriersLocked = false;
         $carrierPathsToUse = $carrierPaths;
 
         if ($carrierPaths === null) {
             // Use carrier pool - select carriers based on required capacity
             $ciphertextSize = strlen(base64_decode($encrypted['ciphertext']));
             $selectedCarriers = $this->carrierPoolSelector->select($userId, $ciphertextSize, $useSystemCarriers);
-            $carrierPathsToUse = $selectedCarriers->map(fn($carrier) => $carrier->file_path)->toArray();
+            $this->carrierPoolSelector->markInUse($selectedCarriers);
+            $carriersLocked = true;
+
+            // Pool carrier paths are storage-relative; resolve to absolute paths for stego driver.
+            $carrierPathsToUse = $selectedCarriers->map(fn($carrier) => Storage::path($carrier->file_path))->toArray();
         }
 
         // -----------------------------------------------------------------
         // Step 4: Compute carrier capacities, then split ciphertext into chunks
         // -----------------------------------------------------------------
-        // Cache capacity by file hash — avoids re-running the Python driver for
-        // the same carrier image on repeated encode calls (e.g. test/dev cycles).
-        $capacities  = array_map(function ($p) {
-            $cacheKey = 'stego.capacity.' . hash_file('md5', $p);
-            return Cache::remember($cacheKey, 3600, fn () => $this->stego->capacity($p));
-        }, $carrierPathsToUse);
-        $segments    = $this->segmentation->split($encrypted['ciphertext'], $capacities);
-        $numSegments = count($segments);
+        try {
+            // Cache capacity by file hash — avoids re-running the Python driver for
+            // the same carrier image on repeated encode calls (e.g. test/dev cycles).
+            $capacities  = array_map(function ($p) {
+                $cacheKey = 'stego.capacity.' . hash_file('md5', $p);
+                return Cache::remember($cacheKey, 3600, fn () => $this->stego->capacity($p));
+            }, $carrierPathsToUse);
+            $segments    = $this->segmentation->split($encrypted['ciphertext'], $capacities);
+            $numSegments = count($segments);
+        } catch (\Throwable $e) {
+            if ($carriersLocked && $selectedCarriers !== null) {
+                $this->carrierPoolSelector->release($selectedCarriers);
+            }
+            throw $e;
+        }
 
         // -----------------------------------------------------------------
         // Step 4 & 5: Embed each chunk into its carrier and upload to S3
@@ -205,14 +217,10 @@ class StegoDocumentService
                 $s3Key    = $this->cloud->carrierKey($userId, "doc{$stegoDoc->id}_seg{$idx}_" . basename($carrierPath));
                 $s3Result = $this->cloud->uploadFile($outputPath, $s3Key);
 
-                // If using pool carriers, update the existing carrier record
+                // If using pool carriers, keep the original pool file intact and
+                // only reference the selected carrier for segment linkage.
                 if ($selectedCarriers !== null && isset($selectedCarriers[$carrierIdx])) {
                     $carrier = $selectedCarriers[$carrierIdx];
-                    $carrier->update([
-                        'file_path' => $outputPath,
-                        's3_key'    => $s3Result['s3_key'],
-                        'psnr'      => $psnrValue,
-                    ]);
                 } else {
                     // Persist the carrier record (for direct path uploads).
                     $carrier = $this->persistence->createStegoCarrier([
@@ -263,6 +271,9 @@ class StegoDocumentService
             Cache::forget("stego.index.u{$userId}");
 
         } catch (\Throwable $e) {
+            if ($carriersLocked && $selectedCarriers !== null) {
+                $this->carrierPoolSelector->release($selectedCarriers);
+            }
             $stegoDoc?->update([
                 'status'        => 'failed',
                 'failed_reason' => substr($e->getMessage(), 0, 500),

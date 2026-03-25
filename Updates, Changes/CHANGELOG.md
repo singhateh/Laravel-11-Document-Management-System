@@ -29,9 +29,12 @@ All notable changes to the StegoLock project will be documented in this file.
 ### Changed
 - Enhanced Encode page with comprehensive capacity planning and carrier selection tools
 - Improved user experience with real-time feedback during encoding process
+- Folder creation flow now enforces requested/default visibility on both newly created and existing matched folders
+- Folder model visibility default aligned with folders table default for consistent behavior across creation paths
 
 ### Fixed
-- N/A
+- Fixed issue where newly created folders could exist in the database but not appear in the frontend folder list
+- Fixed first-or-create edge case where an existing folder kept stale private visibility and remained hidden after creation attempts
 
 ## [1.0.0] - 2026-03-20
 

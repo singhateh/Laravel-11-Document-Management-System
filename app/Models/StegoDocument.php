@@ -5,10 +5,23 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
+use App\Models\StegoCarrier;
 
 class StegoDocument extends Model
 {
     use HasFactory;
+
+    protected static function booted(): void
+    {
+        static::deleting(function (StegoDocument $stegoDoc): void {
+            $carrierIds = $stegoDoc->segments()->pluck('stego_carrier_id')->all();
+            if (empty($carrierIds)) {
+                return;
+            }
+
+            StegoCarrier::whereIn('id', $carrierIds)->update(['is_in_use' => false]);
+        });
+    }
 
     protected $fillable = [
         'document_id',
