@@ -204,9 +204,11 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
      Route::prefix('notifications')->name('api.notifications.')->group(function () {
          Route::get('/', [NotificationController::class, 'fetchNotifications'])
              ->name('index');
-         Route::post('/{id}/read', [NotificationController::class, 'markAsRead'])
+         Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])
+             ->whereNumber('notification')
              ->name('read');
-         Route::post('/{id}/dismiss', [NotificationController::class, 'dismiss'])
+         Route::post('/{notification}/dismiss', [NotificationController::class, 'dismiss'])
+             ->whereNumber('notification')
              ->name('dismiss');
      });
 

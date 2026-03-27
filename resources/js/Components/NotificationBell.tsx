@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { router } from '@inertiajs/react';
+import axios from 'axios';
 
 interface Notification {
     id: number;
@@ -18,17 +19,8 @@ export default function NotificationBell() {
     const fetchNotifications = async () => {
         try {
             setLoading(true);
-            const response = await fetch('/api/notifications', {
-                headers: {
-                    'Accept': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                setNotifications(data.notifications || []);
-            }
+            const response = await axios.get('/api/notifications');
+            setNotifications(response.data.notifications || []);
         } catch (error) {
             console.error('Failed to fetch notifications:', error);
         } finally {
@@ -45,20 +37,9 @@ export default function NotificationBell() {
         return () => clearInterval(interval);
     }, []);
 
-    const getCsrfToken = () => {
-        return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '';
-    };
-
     const markAsRead = async (id: number) => {
         try {
-            await fetch(`/api/notifications/${id}/read`, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-TOKEN': getCsrfToken(),
-                },
-            });
+            await axios.post(`/api/notifications/${id}/read`);
             
             setNotifications(notifications.map(n =>
                 n.id === id ? { ...n, status: 'READ' } : n
@@ -70,14 +51,7 @@ export default function NotificationBell() {
 
     const dismiss = async (id: number) => {
         try {
-            await fetch(`/api/notifications/${id}/dismiss`, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-TOKEN': getCsrfToken(),
-                },
-            });
+            await axios.post(`/api/notifications/${id}/dismiss`);
             
             setNotifications(notifications.filter(n => n.id !== id));
         } catch (error) {

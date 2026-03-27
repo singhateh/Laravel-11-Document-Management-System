@@ -15,6 +15,10 @@ class NotificationService
     {
         $user = Auth::user();
         
+        if (!$user) {
+            throw new \Exception('User not authenticated');
+        }
+        
         return Notification::create([
             'notifiable_id' => $user->id,
             'notifiable_type' => User::class,
@@ -57,6 +61,10 @@ class NotificationService
     public function getUnreadNotifications(int $limit = 10)
     {
         $user = Auth::user();
+        
+        if (!$user) {
+            return collect([]);
+        }
         
         return Notification::where('notifiable_id', $user->id)
             ->where('notifiable_type', User::class)

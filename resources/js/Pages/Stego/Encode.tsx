@@ -1,7 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, useForm, usePage } from '@inertiajs/react';
 import { PageProps } from '@/types';
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { 
   estimateCarriersNeeded, 
   MIN_IMAGE_DIMENSION, 
@@ -154,8 +154,11 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
         await handlePreflightCheckFromHook(getPreflightParams());
     };
 
-    const handleSubmit = async (e: FormEvent) => {
-        e.preventDefault();
+    const handleEncode = async () => {
+        if (processing || !canSubmit) {
+            return;
+        }
+
         setErrorMsg(null);
         setSuccessMsg(null);
         
@@ -365,7 +368,7 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                         })}
                     </div>
 
-                    <form onSubmit={handleSubmit}>
+                    <form onSubmit={(e) => e.preventDefault()}>
                         <div className="rounded-xl bg-white p-6 shadow-sm">
 
                             {/* Step 1 */}
@@ -1008,7 +1011,8 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                     </button>
                                 ) : (
                                     <button
-                                        type="submit"
+                                        type="button"
+                                        onClick={() => void handleEncode()}
                                         disabled={!canSubmit || processing}
                                         className={`flex items-center gap-2 rounded-md px-5 py-2 text-sm font-medium text-white shadow-sm transition-all disabled:opacity-40 ${
                                             processing
