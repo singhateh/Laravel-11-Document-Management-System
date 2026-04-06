@@ -26,6 +26,8 @@ class StoreDocumentRequest extends FormRequest
     {
         $maxUploadKb = $this->maxUploadKilobytes();
         $rules = [];
+        $uploadedFiles = $this->file('files');
+        $singleFileUpload = $this->hasFile('files') && !is_array($uploadedFiles);
 
         if ($this->has('url')) {
             $rules = [
@@ -35,19 +37,31 @@ class StoreDocumentRequest extends FormRequest
                 'visibility' => 'nullable|in:public,private',
             ];
         } elseif ($this->has('folder_name')) {
-            $rules = [
-                'folder_id' => 'required|exists:folders,id',
-                'folder_name' => 'required|string|max:255',
-                'files' => 'required|array|min:1',
-                'files.*' => "required|file|max:{$maxUploadKb}",
-                'visibility' => 'nullable|in:public,private',
-            ];
+            $rules = $singleFileUpload
+                ? [
+                    'folder_id' => 'required|exists:folders,id',
+                    'folder_name' => 'required|string|max:255',
+                    'files' => "required|file|max:{$maxUploadKb}",
+                    'visibility' => 'nullable|in:public,private',
+                ]
+                : [
+                    'folder_id' => 'required|exists:folders,id',
+                    'folder_name' => 'required|string|max:255',
+                    'files' => 'required|array|min:1',
+                    'files.*' => "required|file|max:{$maxUploadKb}",
+                    'visibility' => 'nullable|in:public,private',
+                ];
         } else {
-            $rules = [
-                'folder_id' => 'required|exists:folders,id',
-                'files' => 'required|array|min:1',
-                'files.*' => "required|file|max:{$maxUploadKb}",
-            ];
+            $rules = $singleFileUpload
+                ? [
+                    'folder_id' => 'required|exists:folders,id',
+                    'files' => "required|file|max:{$maxUploadKb}",
+                ]
+                : [
+                    'folder_id' => 'required|exists:folders,id',
+                    'files' => 'required|array|min:1',
+                    'files.*' => "required|file|max:{$maxUploadKb}",
+                ];
         }
 
         return $rules;
@@ -55,6 +69,12 @@ class StoreDocumentRequest extends FormRequest
     
     protected function prepareForValidation()
     {
+        // Some clients may submit a scalar "files" field in addition to multipart files[];
+        // drop it so validation uses the uploaded file bag only.
+        if ($this->has('files') && !is_array($this->input('files')) && !$this->hasFile('files')) {
+            $this->request->remove('files');
+        }
+
         // Normalize files input
         if (!$this->hasFile('files') && $this->hasFile('files[]')) {
             $this->merge(['files' => $this->file('files[]')]);
@@ -91,6 +111,8 @@ class StoreDocumentRequest extends FormRequest
             'url.required' => 'The URL is required.',
             'url.string' => 'The URL must be a string.',
             'files.required' => 'Please select at least one file.',
+            'files.file' => 'The selected file is invalid.',
+            'files.max' => "Each file must be {$maxMb} MB or smaller.",
             'files.array' => 'Invalid upload payload. Please choose your files again.',
             'files.uploaded' => 'Upload failed because the file exceeds the server upload limit. Increase upload_max_filesize and post_max_size in PHP settings.',
             'files.*.required' => 'Please select a file.',

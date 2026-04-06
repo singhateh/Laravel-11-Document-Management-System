@@ -45,12 +45,13 @@ class EncodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
     public int $timeout = 300;
 
     /**
-     * @param int      $userId        Owner's user ID.
-     * @param string   $plaintextPath Storage-relative path to the staged plaintext file.
-     * @param string   $masterKey     Hex-encoded 256-bit master key (encrypted at rest).
-     * @param string[] $carrierPaths  Storage-relative paths to staged carrier images.
-     * @param int|null $documentId    Source Document primary key.
-     * @param int      $pendingDocId  Pre-created StegoDocument PK with status='pending'.
+     * @param int      $userId              Owner's user ID.
+     * @param string   $plaintextPath       Storage-relative path to the staged plaintext file.
+     * @param string   $masterKey           Hex-encoded 256-bit master key (encrypted at rest).
+     * @param string[] $carrierPaths        Storage-relative paths to staged carrier images.
+     * @param int|null $documentId          Source Document primary key.
+     * @param int      $pendingDocId        Pre-created StegoDocument PK with status='pending'.
+     * @param bool     $useSystemCarriers   Whether to use system carriers as fallback.
      */
     public function __construct(
         private readonly int    $userId,
@@ -59,6 +60,7 @@ class EncodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
         private readonly array  $carrierPaths,
         private readonly ?int   $documentId,
         private readonly int    $pendingDocId,
+        private readonly bool   $useSystemCarriers = false,
     ) {
         $this->onQueue('stego');
     }
@@ -76,6 +78,7 @@ class EncodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
                 $absolutePaths,
                 $this->documentId,
                 $this->pendingDocId,
+                $this->useSystemCarriers,
             );
         } finally {
             $this->cleanupStage();

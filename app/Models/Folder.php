@@ -27,9 +27,9 @@ class Folder extends Model
                 $folder->position = static::max('position') + 1;
             }
             
-            // Set private visibility by default
+            // Keep model default aligned with migration default.
             if (!isset($folder->visibility)) {
-                $folder->visibility = 'private';
+                $folder->visibility = 'public';
             }
         });
     }

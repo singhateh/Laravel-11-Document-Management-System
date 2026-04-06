@@ -14,14 +14,22 @@ class NotificationController extends Controller
 
     public function fetchNotifications()
     {
-        $cacheKey = 'notifications';
+        $user = request()->user();
+        
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        $cacheKey = 'notifications_' . $user->id;
 
         // Check if notifications exist in cache
         if (Cache::has($cacheKey)) {
             $notifications = Cache::get($cacheKey);
         } else {
             // Fetch notifications from the database if not found in cache
-            $notifications = Notification::where('dismiss_status', 'UNDISMISSED')
+            $notifications = Notification::where('notifiable_id', $user->id)
+                ->where('notifiable_type', User::class)
+                ->where('dismiss_status', 'UNDISMISSED')
                 ->where('status', 'UNREAD')
                 ->latest()->limit(10)->get();
 
@@ -30,6 +38,11 @@ class NotificationController extends Controller
         }
 
         session()->put('notifications', $notifications);
+
+        // Return JSON response for API calls
+        if (request()->expectsJson()) {
+            return response()->json(['notifications' => $notifications]);
+        }
 
         // Render notifications view
         $view = view('notifications.fetch', compact('notifications'))->render();
@@ -40,16 +53,24 @@ class NotificationController extends Controller
 
     public function dismiss(Request $request, Notification $notification)
     {
-        $authUser = $request->authUser;
+        $user = $request->user();
 
-        // Check if authUser and roles are set
-        if (!isset($authUser['roles'][0]['name']) || !isset($authUser['id'])) {
-            return response()->json(['message' => 'Invalid user data'], 400);
+        // Check if user is authenticated
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
-        $isCustomer = $authUser['roles'][0]['name'] === 'customer';
+        // Verify the notification belongs to this user
+        $belongsToUser =
+            ($notification->notifiable_id == $user->id && $notification->notifiable_type == User::class)
+            || ($notification->created_by_user_id == $user->id);
 
-        $query = Notification::where($isCustomer ? 'notifiable_id' : 'created_by_user_id', $authUser['id'])
+        if (!$belongsToUser) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $query = Notification::where('notifiable_id', $user->id)
+            ->where('notifiable_type', User::class)
             ->where('dismiss_status', 'UNDISMISSED')
             ->where('status', 'UNREAD')
             ->latest()
@@ -64,7 +85,7 @@ class NotificationController extends Controller
             ]);
 
             // Clear the cache
-            $cacheKey = 'dashboard_data_' . $authUser['id'];
+            $cacheKey = 'dashboard_data_' . $user->id;
             Cache::forget($cacheKey);
 
             // Retrieve the latest notifications again (after update)
@@ -83,6 +104,7 @@ class NotificationController extends Controller
     public function store(StoreNotificationRequest $request)
     {
         $validated = $request->validated();
+        $user = $request->user();
 
         $notification =  Notification::create([
             'notifiable_id'   => $validated['customer_id'],
@@ -91,11 +113,17 @@ class NotificationController extends Controller
             'model_type'      => User::class,
             'model_id'        => $validated['customer_id'],
             'message'         => $validated['message'],
-            'created_by_user_id' => $request->user()?->id ?? 1,
+            'created_by_user_id' => $user?->id ?? 1,
         ]);
 
-        $data = $notification->customer?->recentNotifications;
-        $customer = $notification->customer;
+        // Fetch recent notifications for the notifiable user
+        $data = Notification::where('notifiable_id', $notification->notifiable_id)
+            ->where('notifiable_type', User::class)
+            ->where('dismiss_status', 'UNDISMISSED')
+            ->latest()
+            ->limit(10)
+            ->get();
+        $customer = $notification->notifiable;
         $image = false;
 
         $view = view('notifications.list', compact('data', 'customer', 'image'))->render();
@@ -105,16 +133,47 @@ class NotificationController extends Controller
 
     public function show(Request $request, Notification $notification)
     {
+        $user = $request->user();
+        
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
 
-        // try {
         // Update the dismiss status for the current notification
         $notification->update([
             'status' => 'READ', // or 'READ'
         ]);
 
         return view('notifications.show', compact('notification'));
-        // } catch (\Exception $e) {
-        //     return response()->json(['message' => 'An error occurred while processing the request'], 500);
-        // }
+    }
+
+    public function markAsRead(Request $request, Notification $notification)
+    {
+        $user = $request->user();
+        
+        if (!$user) {
+            return response()->json(['message' => 'Invalid user data'], 400);
+        }
+
+        // Verify the notification belongs to this user
+        $belongsToUser =
+            ($notification->notifiable_id == $user->id && $notification->notifiable_type == User::class)
+            || ($notification->created_by_user_id == $user->id);
+
+        if (!$belongsToUser) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+        
+        try {
+            $notification->update(['status' => 'READ']);
+
+            // Clear the cache
+            $cacheKey = 'notifications_' . $user->id;
+            Cache::forget($cacheKey);
+
+            return response()->json(['message' => 'Notification marked as read']);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'An error occurred while processing the request'], 500);
+        }
     }
 }

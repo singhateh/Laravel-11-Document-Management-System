@@ -56,17 +56,27 @@ class StegoWebController extends Controller
             ->latest()
             ->get();
 
+        // Get system carriers for fallback option
+        $systemCarriers = \App\Models\StegoCarrier::where('uploaded_by', \App\Models\User::where('role', 'admin')->first()->id ?? 0)
+            ->where('validation_status', 'valid')
+            ->where('is_in_use', false)
+            ->select(['id', 'name', 'capacity_bytes', 'file_path'])
+            ->get();
+
         return Inertia::render('Stego/Encode', [
             'documents' => $documents,
+            'systemCarriers' => $systemCarriers,
         ]);
     }
 
     public function encode(Request $request)
     {
+        $useSystemCarriers = $request->boolean('use_system_carriers');
+
         $request->validate([
             'document_id'  => ['required', 'integer', 'exists:documents,id'],
-            'carriers'     => ['required', 'array', 'min:1'],
-            'carriers.*'   => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
+            'carriers'     => ['nullable', 'array'],
+            'carriers.*'   => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
         ]);
 
         // Master Key is derived at login and kept server-side only.
@@ -89,7 +99,12 @@ class StegoWebController extends Controller
             return back()->withErrors(['document_id' => $e->getMessage()]);
         }
 
-        $carrierPaths = $this->storeCarriersTmp($request->file('carriers'));
+        $carrierFiles = $request->file('carriers', []);
+        if (!is_array($carrierFiles)) {
+            $carrierFiles = [$carrierFiles];
+        }
+
+        $carrierPaths = empty($carrierFiles) ? null : $this->storeCarriersTmp($carrierFiles);
 
         try {
             $result   = $this->stegoService->encode(
@@ -97,7 +112,9 @@ class StegoWebController extends Controller
                 $plaintext,
                 $masterKey,
                 $carrierPaths,
-                $document->id
+                $document->id,
+                null,
+                $useSystemCarriers,
             );
             $usedCarrierCount = count($result['quality_metrics'] ?? []);
 
@@ -106,7 +123,7 @@ class StegoWebController extends Controller
         } catch (\Exception $e) {
             return back()->withErrors(['encode' => 'Encoding failed: ' . $e->getMessage()]);
         } finally {
-            $this->releaseCarriers($carrierPaths);
+            $this->releaseCarriers($carrierPaths ?? []);
         }
     }
 
@@ -230,6 +247,44 @@ class StegoWebController extends Controller
 
         return Inertia::render('Stego/Tokens', [
             'tokens' => $tokens,
+        ]);
+    }
+
+    // ── Carrier Pool management (Inertia page) ───────────────────────────────
+
+    public function carrierPool()
+    {
+        $user = Auth::user();
+
+        $carriers = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->select([
+                'id', 'name', 'file_type', 'mime_type', 'size',
+                'psnr', 'capacity_bytes', 'validation_status',
+                'validation_error', 'is_in_use', 'validated_at', 'created_at',
+            ])
+            ->latest()
+            ->paginate(20);
+
+        // Calculate pool statistics
+        $totalCarriers = \App\Models\StegoCarrier::where('uploaded_by', $user->id)->count();
+        $validCarriers = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->where('validation_status', 'valid')
+            ->count();
+        $totalCapacity = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->where('validation_status', 'valid')
+            ->sum('capacity_bytes');
+        $inUseCount = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->where('is_in_use', true)
+            ->count();
+
+        return Inertia::render('Stego/CarrierPool', [
+            'carriers' => $carriers,
+            'stats' => [
+                'total' => $totalCarriers,
+                'valid' => $validCarriers,
+                'totalCapacity' => $totalCapacity,
+                'inUse' => $inUseCount,
+            ],
         ]);
     }
 }

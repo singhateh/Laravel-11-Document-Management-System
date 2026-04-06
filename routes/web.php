@@ -146,7 +146,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/encode', [StegoWebController::class, 'encode'])->name('encode');
         Route::get('/decode',  [StegoWebController::class, 'decodeForm'])->name('decode.form');
         Route::post('/decode', [StegoWebController::class, 'decode'])->name('decode');
-        Route::get('/tokens',  [StegoWebController::class, 'tokens'])->name('tokens');        Route::delete('/{id}', [StegoWebController::class, 'destroy'])->name('destroy');    });
+        Route::get('/carriers', [StegoWebController::class, 'carrierPool'])->name('carriers');
+        Route::get('/tokens',  [StegoWebController::class, 'tokens'])->name('tokens');
+        Route::delete('/{id}', [StegoWebController::class, 'destroy'])->name('destroy');
+    });
 
      // User management routes
      Route::get('/users/roles', [UserManagementController::class, 'roles'])->name('users.roles');

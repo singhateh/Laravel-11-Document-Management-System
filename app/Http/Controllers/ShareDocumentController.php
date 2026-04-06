@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Folder;
 use App\Models\Document;
 use App\Models\StegoDocument;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use App\Models\ShareDocument;
 use App\Http\Requests\StoreShareDocumentRequest;
@@ -16,6 +17,7 @@ use Inertia\Inertia;
 
 class ShareDocumentController extends Controller
 {
+    public function __construct(private readonly NotificationService $notificationService) {}
 
     public function getSharedDocuments($slug, $sharedid, $token)
     {
@@ -64,6 +66,22 @@ class ShareDocumentController extends Controller
         if (isset($validated['permission_level'])) {
             $shareDocument->setPermissionLevel($validated['permission_level']);
             $shareDocument->save();
+        }
+
+        // Create notification for the recipient if email is provided
+        if (isset($validated['email'])) {
+            $recipient = User::where('email', $validated['email'])->first();
+            if ($recipient) {
+                $sender = Auth::user();
+                $shareName = $request->name ?? 'Document';
+                $this->notificationService->createShareNotification(
+                    $recipient,
+                    $sender,
+                    $request->slug,
+                    $shareName,
+                    $request->shared_id
+                );
+            }
         }
 
         return response()->json(['message' => 'shared successfully', 'share' => $shareDocument], 200);

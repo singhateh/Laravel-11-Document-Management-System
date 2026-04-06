@@ -19,10 +19,23 @@ class FolderService
 
     public function setStoreFolder($request)
     {
+        $visibility = $request->input('visibility', 'public');
+        $folder = null;
+
         if (!empty($request->parent_id)) {
-            Folder::firstOrCreate(['name' => $request->folder_name, 'parent_id' => $request->parent_id]);
+            $folder = Folder::firstOrCreate(
+                ['name' => $request->folder_name, 'parent_id' => $request->parent_id],
+                ['visibility' => $visibility]
+            );
         } else {
-            Folder::firstOrCreate(['name' => $request->folder_name]);
+            $folder = Folder::firstOrCreate(
+                ['name' => $request->folder_name],
+                ['visibility' => $visibility]
+            );
+        }
+
+        if ($folder && $folder->visibility !== $visibility) {
+            $folder->update(['visibility' => $visibility]);
         }
 
         // Reload the folders after creating the new one

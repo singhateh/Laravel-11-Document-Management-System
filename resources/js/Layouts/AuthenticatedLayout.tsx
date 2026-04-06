@@ -1,6 +1,7 @@
 import ApplicationLogo from '@/Components/ApplicationLogo';
 import Dropdown from '@/Components/Dropdown';
 import NavLink from '@/Components/NavLink';
+import NotificationBell from '@/Components/NotificationBell';
 import ResponsiveNavLink from '@/Components/ResponsiveNavLink';
 import { Link, usePage } from '@inertiajs/react';
 import { PropsWithChildren, ReactNode, useState } from 'react';
@@ -106,6 +107,12 @@ export default function Authenticated({
                                     Decode
                                 </NavLink>
                                 <NavLink
+                                    href={route('stego.carriers', undefined, false)}
+                                    active={route().current('stego.carriers')}
+                                >
+                                    🖼️ Carrier Pool
+                                </NavLink>
+                                <NavLink
                                     href={route('stego.tokens', undefined, false)}
                                     active={route().current('stego.tokens')}
                                 >
@@ -116,6 +123,7 @@ export default function Authenticated({
 
                         {/* Right: user dropdown */}
                         <div className="hidden sm:ms-6 sm:flex sm:items-center">
+                            <NotificationBell />
                             <div className="relative ms-3">
                                 <Dropdown>
                                     <Dropdown.Trigger>
@@ -244,6 +252,9 @@ export default function Authenticated({
                         </ResponsiveNavLink>
                         <ResponsiveNavLink href={route('stego.decode.form', undefined, false)} active={route().current('stego.decode.form')}>
                             Decode
+                        </ResponsiveNavLink>
+                        <ResponsiveNavLink href={route('stego.carriers', undefined, false)} active={route().current('stego.carriers')}>
+                            🖼️ Carrier Pool
                         </ResponsiveNavLink>
                         <ResponsiveNavLink href={route('stego.tokens', undefined, false)} active={route().current('stego.tokens')}>
                             API Tokens

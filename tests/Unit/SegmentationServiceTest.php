@@ -188,6 +188,24 @@ class SegmentationServiceTest extends TestCase
         $segments = $this->svc->split($base64, $capacities);
 
         $this->assertCount(3, $segments);
+        $this->assertSame(2 * 1024 * 1024, strlen($segments[0]['chunk']));
+        $this->assertSame(2 * 1024 * 1024, strlen($segments[1]['chunk']));
+        $this->assertSame(1 * 1024 * 1024, strlen($segments[2]['chunk']));
+    }
+
+    #[Test]
+    public function split_bin_packing_uses_fewer_carriers_when_large_capacity_exists(): void
+    {
+        $raw        = str_repeat('k', 6 * 1024 * 1024);
+        $base64     = base64_encode($raw);
+        $capacities = [5 * 1024 * 1024, 2 * 1024 * 1024, 1 * 1024 * 1024];
+
+        $segments = $this->svc->split($base64, $capacities);
+
+        $this->assertCount(2, $segments);
+        $this->assertSame([0, 1], array_column($segments, 'index'));
+        $this->assertSame(5 * 1024 * 1024, strlen($segments[0]['chunk']));
+        $this->assertSame(1 * 1024 * 1024, strlen($segments[1]['chunk']));
     }
 
     #[Test]
@@ -293,7 +311,7 @@ class SegmentationServiceTest extends TestCase
     public function recommended_segment_count_uneven_carrier_capacities(): void
     {
         // 4MB data, carriers with varying capacities
-        $this->assertSame(3, $this->svc->recommendedSegmentCount(4 * 1024 * 1024, [1.5 * 1024 * 1024, 2.5 * 1024 * 1024, 1 * 1024 * 1024]));
+        $this->assertSame(2, $this->svc->recommendedSegmentCount(4 * 1024 * 1024, [1.5 * 1024 * 1024, 2.5 * 1024 * 1024, 1 * 1024 * 1024]));
     }
 
     #[Test]
@@ -314,8 +332,8 @@ class SegmentationServiceTest extends TestCase
     #[Test]
     public function recommended_segment_count_large_number_of_small_carriers(): void
     {
-        // 3MB data, 4 carriers each with 1MB capacity (our new logic uses all available carriers)
-        $this->assertSame(4, $this->svc->recommendedSegmentCount(3 * 1024 * 1024, [1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024]));
+        // 3MB data, 4 carriers each with 1MB capacity -> minimum required is 3 carriers
+        $this->assertSame(3, $this->svc->recommendedSegmentCount(3 * 1024 * 1024, [1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024, 1 * 1024 * 1024]));
     }
 
     // -------------------------------------------------------------------------

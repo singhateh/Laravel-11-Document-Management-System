@@ -19,12 +19,21 @@ class StegoCarrier extends Model
         's3_key',
         'psnr',         // PSNR in dB after embedding (images only; null otherwise)
         'uploaded_by',
+        // Carrier pool fields
+        'validation_status',    // pending, valid, invalid
+        'validation_error',     // Error message if validation failed
+        'capacity_bytes',       // Measured carrier capacity in bytes
+        'is_in_use',            // Whether carrier is locked by an active encode
+        'validated_at',         // Timestamp when validation completed
     ];
 
     protected function casts(): array
     {
         return [
             'size' => 'integer',
+            'capacity_bytes' => 'integer',
+            'is_in_use' => 'boolean',
+            'validated_at' => 'datetime',
         ];
     }
 
@@ -38,9 +47,21 @@ class StegoCarrier extends Model
      */
     public function getS3UrlAttribute(): ?string
     {
-        return $this->s3_key
-            ? Storage::disk('local')->path($this->s3_key)
-            : null;
+        $disk = (string) config('stegolock.storage.disk', 'local');
+
+        if (!$this->s3_key) {
+            return null;
+        }
+
+        if ($disk === 'local') {
+            return Storage::disk('local')->path($this->s3_key);
+        }
+
+        $baseUrl = (string) config("filesystems.disks.{$disk}.url", '');
+
+        return $baseUrl !== ''
+            ? rtrim($baseUrl, '/') . '/' . ltrim($this->s3_key, '/')
+            : $this->s3_key;
     }
 
     // -------------------------------------------------------------------------
