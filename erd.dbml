@@ -393,6 +393,12 @@ Table stego_carriers {
   // PSNR in dB measured after LSB embedding (images only; null for audio/text carriers).
   // Architecture requires PSNR >= 40 dB for image carriers.
   psnr float
+  // Carrier pool management columns (migration 2026_03_23_000001)
+  validation_status "enum('pending','valid','invalid')" [default: 'pending']
+  validation_error varchar
+  capacity_bytes bigint
+  is_in_use boolean [default: false]
+  validated_at timestamp
   uploaded_by bigint [ref: > users.id]
   created_at timestamp
   updated_at timestamp
@@ -400,6 +406,7 @@ Table stego_carriers {
   indexes {
     (file_type)
     (uploaded_by)
+    (uploaded_by, validation_status, is_in_use)
   }
 }
 
@@ -423,6 +430,7 @@ Table stego_documents {
   stego_hash_sha256 varchar(64) // SHA-256 of original plaintext (nullable for pending status)
   stego_dek_salt varchar(64)    // hex-encoded DEK derivation salt
   stego_dek_iter int [default: 10000]      // PBKDF2 iteration count
+  compressed boolean [default: true]        // Whether the ciphertext was compressed before encryption
   s3_key varchar
   // Decoding operation fields
   decoding_status varchar [default: 'idle'] // idle, pending, in_progress, completed, failed

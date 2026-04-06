@@ -56,9 +56,21 @@ class StegoDocument extends Model
      */
     public function getS3UrlAttribute(): ?string
     {
-        return $this->s3_key
-            ? Storage::disk('local')->path($this->s3_key)
-            : null;
+        $disk = (string) config('stegolock.storage.disk', 'local');
+
+        if (!$this->s3_key) {
+            return null;
+        }
+
+        if ($disk === 'local') {
+            return Storage::disk('local')->path($this->s3_key);
+        }
+
+        $baseUrl = (string) config("filesystems.disks.{$disk}.url", '');
+
+        return $baseUrl !== ''
+            ? rtrim($baseUrl, '/') . '/' . ltrim($this->s3_key, '/')
+            : $this->s3_key;
     }
 
     // -------------------------------------------------------------------------

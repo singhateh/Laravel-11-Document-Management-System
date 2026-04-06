@@ -187,8 +187,8 @@ class StegoDocumentService
                 ? $this->persistence->updateStegoDocument($existingDocId, $coreData)
                 : $this->persistence->createStegoDocument($coreData);
 
-            // Persist base64 ciphertext as a local file and store only its path.
-            $ciphertextPath = $this->storeCiphertextOnLocalDisk($stegoDoc->id, $encrypted['ciphertext']);
+            // Persist base64 ciphertext to configured cloud disk and store its object key.
+            $ciphertextPath = $this->uploadCiphertextToCloud($userId, $stegoDoc->id, $encrypted['ciphertext']);
             $stegoDoc->update([
                 'ciphertext' => null,
                 's3_key'     => $ciphertextPath,
@@ -244,8 +244,8 @@ class StegoDocumentService
                     'stego_carrier_id'  => $carrier->id,
                     'segment_index'     => $idx,
                     'encrypted_chunk'   => base64_encode($seg['chunk']),
-                    // Local mode keeps the encrypted chunk in DB; no object key is needed.
-                    's3_key'            => null,
+                    // Always persist uploaded stego artifact key for retrieval/auditability.
+                    's3_key'            => $s3Result['s3_key'],
                     'chunk_hash'        => $seg['hash'],
                 ];
             }
@@ -538,18 +538,25 @@ class StegoDocumentService
         return 'binary';
     }
 
-    private function storeCiphertextOnLocalDisk(int $stegoDocumentId, string $base64Ciphertext): string
+    private function uploadCiphertextToCloud(int $userId, int $stegoDocumentId, string $base64Ciphertext): string
     {
-        $relativePath = "stego/ciphertext/{$stegoDocumentId}.enc";
-        Storage::disk('local')->put($relativePath, $base64Ciphertext);
+        $key = $this->cloud->documentKey($userId, $stegoDocumentId) . '.enc';
+        $result = $this->cloud->uploadContent($base64Ciphertext, $key);
 
-        return $relativePath;
+        return $result['s3_key'];
     }
 
     private function loadCiphertextForDecode($stegoDoc): string
     {
-        if (!empty($stegoDoc->s3_key) && Storage::disk('local')->exists($stegoDoc->s3_key)) {
-            return Storage::disk('local')->get($stegoDoc->s3_key);
+        if (!empty($stegoDoc->s3_key)) {
+            try {
+                return $this->cloud->getContents($stegoDoc->s3_key);
+            } catch (\Throwable) {
+                // Fallback to legacy local-path behavior for backward compatibility.
+                if (Storage::disk('local')->exists($stegoDoc->s3_key)) {
+                    return Storage::disk('local')->get($stegoDoc->s3_key);
+                }
+            }
         }
 
         // Query legacy DB ciphertext only when needed to keep regular fetches lean.

@@ -137,6 +137,10 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
          Route::post('/preflight', [StegoDocumentController::class, 'preflight'])
              ->name('preflight');
 
+        // Validate cloud presence for carrier keys and stego document artifacts
+        Route::post('/cloud/validate', [StegoDocumentController::class, 'validateCloudFiles'])
+            ->name('cloud.validate');
+
      });
 
     // SPA convenience aliases

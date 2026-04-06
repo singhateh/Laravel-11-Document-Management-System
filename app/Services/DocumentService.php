@@ -453,7 +453,7 @@ class DocumentService
             throw new \InvalidArgumentException('No files uploaded.');
         }
 
-        foreach ($request->file('files') as $file) {
+        foreach ($this->normalizeUploadedFiles($request->file('files')) as $file) {
             if (!$file->isValid()) {
                 Log::error("File {$file->getClientOriginalName()} is not valid");
                 continue;
@@ -493,7 +493,7 @@ class DocumentService
             throw new \InvalidArgumentException('No files uploaded.');
         }
 
-        foreach ($request->file('files') as $file) {
+        foreach ($this->normalizeUploadedFiles($request->file('files')) as $file) {
             if (!$file->isValid()) {
                 Log::error("File {$file->getClientOriginalName()} is not valid");
                 continue;
@@ -525,6 +525,27 @@ class DocumentService
         }
 
         return $createdChildFolder ?? $folderId;
+    }
+
+    /**
+     * Normalize an uploaded files payload to an array, supporting both:
+     * - files (single UploadedFile)
+     * - files[] (array of UploadedFile)
+     *
+     * @param  \Illuminate\Http\UploadedFile|array<int,\Illuminate\Http\UploadedFile>|null $files
+     * @return array<int,\Illuminate\Http\UploadedFile>
+     */
+    private function normalizeUploadedFiles(UploadedFile|array|null $files): array
+    {
+        if ($files instanceof UploadedFile) {
+            return [$files];
+        }
+
+        if (is_array($files)) {
+            return array_values(array_filter($files, fn ($file) => $file instanceof UploadedFile));
+        }
+
+        return [];
     }
 
     protected function uploadUrl($request): int
