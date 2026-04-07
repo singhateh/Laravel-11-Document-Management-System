@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 
+let csrfCookieRequest: Promise<unknown> | null = null;
+
 interface CarrierInfo {
   file: File;
   width?: number;
@@ -60,7 +62,23 @@ export function usePreflightVerification() {
   const [preflightRecommendations, setPreflightRecommendations] = useState<string[]>([]);
   const [showPreflight, setShowPreflight] = useState(false);
 
-  const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null)?.content ?? '';
+  const ensureSanctumCsrfCookie = useCallback(async (): Promise<void> => {
+    if (!csrfCookieRequest) {
+      csrfCookieRequest = window.axios.get('/sanctum/csrf-cookie', {
+        withCredentials: true,
+        headers: {
+          Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      });
+    }
+
+    try {
+      await csrfCookieRequest;
+    } finally {
+      csrfCookieRequest = null;
+    }
+  }, []);
 
   const runPreflightVerification = useCallback((params: PreflightVerificationParams): PreflightVerificationResult => {
     const {
@@ -156,24 +174,23 @@ export function usePreflightVerification() {
 
     if (params.documentId) {
       try {
-        const response = await fetch('/api/stego/preflight', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
-          },
-          body: JSON.stringify({
+        await ensureSanctumCsrfCookie();
+
+        const { data: serverResult } = await window.axios.post<ServerPreflightResponse>(
+          '/api/stego/preflight',
+          {
             document_id: Number(params.documentId),
             use_system_carriers: params.useSystemCarriers,
-            ...(csrfToken ? { _token: csrfToken } : {}),
-          }),
-        });
+          },
+          {
+            withCredentials: true,
+            headers: {
+              Accept: 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+          }
+        );
 
-        if (response.ok) {
-          const serverResult = (await response.json()) as ServerPreflightResponse;
           if (!serverResult.can_encode) {
             errors.push(serverResult.message || 'Server preflight indicates insufficient carrier capacity.');
             const shortfall = serverResult.required_bytes - serverResult.available_bytes;
@@ -181,13 +198,19 @@ export function usePreflightVerification() {
               recommendations.push(`Server shortfall: ${shortfall.toLocaleString()} bytes. Add more carriers before encoding.`);
             }
           }
-        } else {
-          const errorPayload = await response.json().catch(() => ({}));
-          if (errorPayload?.message) {
-            errors.push(String(errorPayload.message));
-          }
+      } catch (error: unknown) {
+        const message =
+          typeof error === 'object' &&
+          error !== null &&
+          'response' in error &&
+          typeof (error as { response?: { data?: { message?: string } } }).response?.data?.message === 'string'
+            ? (error as { response?: { data?: { message?: string } } }).response?.data?.message
+            : null;
+
+        if (message) {
+          errors.push(message);
         }
-      } catch {
+
         // Keep local checks as fallback when API preflight is temporarily unreachable.
       }
     }
@@ -202,7 +225,7 @@ export function usePreflightVerification() {
     setPreflightRecommendations(merged.recommendations);
     setShowPreflight(true);
     return merged;
-  }, [runPreflightVerification, csrfToken]);
+  }, [runPreflightVerification, ensureSanctumCsrfCookie]);
 
   const clearPreflight = useCallback(() => {
     setPreflightErrors([]);
