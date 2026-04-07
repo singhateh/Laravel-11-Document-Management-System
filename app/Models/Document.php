@@ -36,11 +36,11 @@ class Document extends Model
 
     protected $fillable = [
         'name', 'original_name', 'file_path', 'size', 'extension', 'folder_id', 'visibility', 'share', 'download', 'email',
-        'url', 'owner_id', 'document_date', 'emojis', 'position',
+        'url', 'owner_id', 'document_date', 'position',
         // AES-256-GCM encryption metadata
         'is_encrypted', 'enc_iv', 'enc_auth_tag', 'enc_dek_salt', 'enc_dek_iterations', 'enc_hash_sha256',
         // Document watcher fields
-        'last_updated_at', 'last_updated_by',
+        'last_updated_at', 'last_updated_by_user_id',
     ];
 
     protected function casts(): array
@@ -84,9 +84,26 @@ class Document extends Model
         return $this->belongsTo(User::class, 'owner_id');
     }
 
+    /**
+     * User who last updated this document (3NF fix — replaced text column with FK).
+     */
+    public function lastUpdatedByUser()
+    {
+        return $this->belongsTo(User::class, 'last_updated_by_user_id');
+    }
+
     public function tags()
     {
         return $this->morphToMany(Tag::class, 'taggable');
+    }
+
+    /**
+     * Emojis attached to this document via the emojiables polymorphic pivot.
+     * Replaces the old 1NF-violating emojis varchar column.
+     */
+    public function emojis()
+    {
+        return $this->morphToMany(Emoji::class, 'emojiable');
     }
 
     public function comments()

@@ -344,7 +344,7 @@ class DocumentController extends Controller
 
         $document->update(array_merge($validated, [
             'last_updated_at' => now(),
-            'last_updated_by' => $user->name,
+            'last_updated_by_user_id' => $user->id,
         ]));
 
         // Notify watchers about the update
