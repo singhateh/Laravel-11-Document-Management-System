@@ -50,6 +50,7 @@ interface PreflightVerificationResult {
 interface ServerPreflightResponse {
   can_encode: boolean;
   required_bytes: number;
+  required_bytes_basis?: 'decoded_ciphertext' | string;
   available_bytes: number;
   user_pool_bytes: number;
   system_pool_bytes: number;
@@ -195,7 +196,10 @@ export function usePreflightVerification() {
             errors.push(serverResult.message || 'Server preflight indicates insufficient carrier capacity.');
             const shortfall = serverResult.required_bytes - serverResult.available_bytes;
             if (shortfall > 0) {
-              recommendations.push(`Server shortfall: ${shortfall.toLocaleString()} bytes. Add more carriers before encoding.`);
+              const basisLabel = serverResult.required_bytes_basis === 'decoded_ciphertext'
+                ? 'decoded ciphertext bytes'
+                : 'required payload bytes';
+              recommendations.push(`Server shortfall: ${shortfall.toLocaleString()} ${basisLabel}. Add more carriers before encoding.`);
             }
           }
       } catch (error: unknown) {

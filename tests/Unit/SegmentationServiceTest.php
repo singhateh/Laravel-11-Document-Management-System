@@ -179,6 +179,21 @@ class SegmentationServiceTest extends TestCase
     }
 
     #[Test]
+    public function split_succeeds_when_total_capacity_exactly_matches_payload_size(): void
+    {
+        $raw = random_bytes(4096);
+        $base64 = base64_encode($raw);
+        $capacities = [2048, 2048];
+
+        $segments = $this->svc->split($base64, $capacities);
+
+        $this->assertCount(2, $segments);
+        $this->assertSame(2048, strlen($segments[0]['chunk']));
+        $this->assertSame(2048, strlen($segments[1]['chunk']));
+        $this->assertSame($raw, $this->svc->reassemble($segments));
+    }
+
+    #[Test]
     public function split_large_payload_produces_multiple_chunks(): void
     {
         $raw        = str_repeat('a', 5 * 1024 * 1024);   // 5 MB → 3 chunks of 2 MB

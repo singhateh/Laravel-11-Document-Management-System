@@ -199,9 +199,13 @@ class SegmentationService
 
         $totalCapacity = array_sum(array_column($carriers, 'capacity'));
 
-        if ($totalCapacity < $dataLength) {
+        // Carrier capacities are already safety-buffered (90% usable), so
+        // compare directly against the raw chunk payload length.
+        $requiredCapacity = $dataLength;
+
+        if ($totalCapacity < $requiredCapacity) {
             throw new \RuntimeException(
-                "Total carrier capacity ({$totalCapacity} bytes) is insufficient for data size ({$dataLength} bytes)."
+                "Total carrier capacity ({$totalCapacity} bytes) is insufficient for data size ({$dataLength} bytes). Need at least {$requiredCapacity} bytes."
             );
         }
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Concerns\HasStegoEncoding;
+use App\Jobs\EncodeStegoDocumentJob;
 use App\Models\Document;
 use App\Models\StegoDocument;
 use App\Services\Stego\StegoDocumentService;
@@ -75,8 +76,6 @@ class StegoWebController extends Controller
 
         $request->validate([
             'document_id'  => ['required', 'integer', 'exists:documents,id'],
-            'carriers'     => ['nullable', 'array'],
-            'carriers.*'   => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
         ]);
 
         // Master Key is derived at login and kept server-side only.
@@ -99,32 +98,29 @@ class StegoWebController extends Controller
             return back()->withErrors(['document_id' => $e->getMessage()]);
         }
 
-        $carrierFiles = $request->file('carriers', []);
-        if (!is_array($carrierFiles)) {
-            $carrierFiles = [$carrierFiles];
-        }
+        // Pre-create pending record so users can immediately see queued state in index.
+        $pending = StegoDocument::create([
+            'document_id' => $document->id,
+            'user_id'     => $user->id,
+            'status'      => 'pending',
+        ]);
 
-        $carrierPaths = empty($carrierFiles) ? null : $this->storeCarriersTmp($carrierFiles);
+        // Manual carrier uploads are disabled for web encode.
+        // Encoding now always uses carrier pool + optional system fallback.
+        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, []);
 
-        try {
-            $result   = $this->stegoService->encode(
-                $user->id,
-                $plaintext,
-                $masterKey,
-                $carrierPaths,
-                $document->id,
-                null,
-                $useSystemCarriers,
-            );
-            $usedCarrierCount = count($result['quality_metrics'] ?? []);
+        EncodeStegoDocumentJob::dispatchAfterResponse(
+            $user->id,
+            $plainPath,
+            $masterKey,
+            $carrierPaths,
+            $document->id,
+            $pending->id,
+            $useSystemCarriers,
+        );
 
-            return redirect()->route('stego.index')
-                ->with('success', "Document encoded and hidden in {$usedCarrierCount} carrier(s).");
-        } catch (\Exception $e) {
-            return back()->withErrors(['encode' => 'Encoding failed: ' . $e->getMessage()]);
-        } finally {
-            $this->releaseCarriers($carrierPaths ?? []);
-        }
+        return redirect()->route('stego.index')
+            ->with('success', 'Encoding queued. Your document will appear once processing completes.');
     }
 
     // ── Decode ────────────────────────────────────────────────────────────────

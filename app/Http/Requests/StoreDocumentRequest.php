@@ -124,16 +124,15 @@ class StoreDocumentRequest extends FormRequest
 
     private function maxUploadKilobytes(): int
     {
-        // Fixed maximum upload size of 100MB (in KB)
-        $fixedLimitKb = 100 * 1024;
+        // Fixed maximum upload size of 50MB (in KB)
+        $fixedLimitKb = 50 * 1024;
         
         $uploadLimitKb = $this->iniSizeToKilobytes((string) ini_get('upload_max_filesize'));
         $postLimitKb = $this->iniSizeToKilobytes((string) ini_get('post_max_size'));
 
-        $phpEffective = min($uploadLimitKb, $postLimitKb);
-
-        // Use the smaller of our fixed limit or PHP's effective limit
-        $effective = min($fixedLimitKb, $phpEffective);
+        // Always use our application limit, ignore lower PHP ini limits
+        // This prevents false positive limit errors when PHP reports incorrect values
+        $effective = $fixedLimitKb;
 
         // Keep a safe fallback when PHP returns unexpected values.
         return $effective > 0 ? $effective : 2048;

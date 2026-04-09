@@ -1,7 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, useForm, usePage } from '@inertiajs/react';
 import { PageProps } from '@/types';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { 
   estimateCarriersNeeded, 
   MIN_IMAGE_DIMENSION, 
@@ -11,7 +11,7 @@ import {
 } from '@/utils/carrierCalculations';
 import { useCarrierPool } from '@/hooks/useCarrierPool';
 import { usePreflightVerification } from '@/hooks/usePreflightVerification';
-import { useCarrierManagement, CarrierInfo } from '@/hooks/useCarrierManagement';
+import { CarrierInfo } from '@/hooks/useCarrierManagement';
 
 interface Document {
     id: number;
@@ -66,20 +66,18 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
         use_system_carriers: false,
     });
 
-    const {
-        carriers,
-        setCarriers,
-        dragOver,
-        setDragOver,
-        fileInputRef,
-        removeCarrier,
-        addFiles,
-        handleDrop,
-        totalCapacity,
-        allLoaded,
-    } = useCarrierManagement(setErrorMsg, (updatedCarriers) => {
-        setData('carriers', updatedCarriers.map((c) => c.file));
-    });
+    // Manual carrier uploads are disabled on this page; web encode uses
+    // carrier pool auto-selection and optional system fallback only.
+    const carriers: CarrierInfo[] = [];
+    const allLoaded = true;
+    const dragOver = false;
+    const setDragOver = (_value: boolean) => {};
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const removeCarrier = (_index: number) => {};
+    const addFiles = (_files: FileList | null) => {};
+    const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+    };
     
     // Carrier pool hook
     const {
@@ -91,6 +89,9 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
       autoSelectCarriersFromPool,
       clearAutoSelection
     } = useCarrierPool();
+
+    // Calculate total capacity from auto-selected carriers
+    const totalCapacity = autoSelectedCarriers.reduce((sum, carrier) => sum + carrier.capacity_bytes, 0);
     
     // Preflight verification hook
     const {
@@ -195,9 +196,8 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
             forceFormData: true,
             preserveState: true,
             onSuccess: () => {
-                const totalCarriers = carriers.length + autoSelectedCarriers.length;
-                setSuccessMsg(`✅ Document encoded and hidden in ${totalCarriers} carrier(s) successfully!`);
-                setCarriers([]);
+                const totalCarriers = autoSelectedCarriers.length;
+                setSuccessMsg(`✅ Encoding queued with ${totalCarriers} selected carrier(s).`);
                 clearAutoSelection();
                 reset();
                 setUseSystemCarriers(false);
@@ -227,7 +227,7 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
         .reduce((sum, c) => sum + c.capacity_bytes, 0);
     const poolCanCoverDocument = !!selectedDoc && poolAvailableCapacity >= dataNeeded;
     const poolFirstMode = !!selectedDoc && !hasManualCarriers && poolCanCoverDocument;
-    const hideManualUploader = poolFirstMode;
+    const hideManualUploader = true;
     const effectiveCapacity = useSystemCarriers ? totalCapacity + systemCapacity + autoSelectedCapacity : totalCapacity + autoSelectedCapacity;
     const capacityOk    = (hasManualCarriers ? allLoaded : true) && effectiveCapacity >= dataNeeded;
 
@@ -422,11 +422,11 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                             {step === 2 && (
                                 <div>
                                     <h3 className="mb-1 text-lg font-semibold text-gray-800">
-                                        🖼️ Upload carrier images
+                                        🖼️ Select carriers from your pool
                                     </h3>
                                     <p className="mb-4 text-sm text-gray-500">
-                                        PNG, BMP or JPEG only (max 100 MB per file). Multiple files allowed — data is distributed across
-                                        all carriers. Each carrier must achieve PSNR ≥ 40 dB after embedding.
+                                        Encoding uses your validated carrier pool and optional system fallback. Data is distributed across
+                                        selected carriers, each meeting PSNR ≥ 40 dB after embedding.
                                     </p>
                                     {errors.carriers && (
                                         <p className="mb-3 text-sm text-red-600">{errors.carriers}</p>
@@ -512,7 +512,7 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                                             Pool-first mode is active
                                                         </p>
                                                         <p className="text-sm text-indigo-700 mt-1">
-                                                            Your pool has enough capacity for this document, so manual upload is hidden.
+                                                            Your pool has enough capacity for this document, so it will be encoded directly from pool carriers.
                                                         </p>
                                                         {isAutoSelecting && (
                                                             <p className="text-sm text-indigo-700 mt-1">Selecting optimal carriers from pool…</p>
@@ -545,7 +545,7 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                                     Carriers: <span className="font-medium text-gray-700">{totalCarriers} image(s) selected</span>
                                                     {autoSelectedCarriers.length > 0 && (
                                                         <span className="text-indigo-600 ml-2">
-                                                            ({carriers.length} uploaded + {autoSelectedCarriers.length} auto-selected)
+                                                            ({autoSelectedCarriers.length} auto-selected)
                                                         </span>
                                                     )}
                                                 </p>
@@ -598,7 +598,7 @@ export default function Encode({ auth, documents, systemCarriers = [], errors = 
                                                 <div>
                                                     <p className="text-sm font-medium text-yellow-800">No carriers in your pool</p>
                                                     <p className="text-sm text-yellow-700 mt-1">
-                                                        Upload carrier images below or enable system carrier pool to proceed with encoding.
+                                                        Add carriers to your pool from Carrier Pool, or enable system carrier fallback to proceed.
                                                     </p>
                                                 </div>
                                             </div>

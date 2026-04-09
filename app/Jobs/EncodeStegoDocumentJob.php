@@ -68,7 +68,9 @@ class EncodeStegoDocumentJob implements ShouldQueue, ShouldBeEncrypted
     public function handle(StegoDocumentService $service): void
     {
         $plaintext     = Storage::get($this->plaintextPath);
-        $absolutePaths = array_map(fn ($p) => Storage::path($p), $this->carrierPaths);
+        $absolutePaths = empty($this->carrierPaths)
+            ? null
+            : array_map(fn ($p) => Storage::path($p), $this->carrierPaths);
 
         try {
             $service->encode(

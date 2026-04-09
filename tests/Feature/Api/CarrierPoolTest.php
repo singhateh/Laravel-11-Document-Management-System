@@ -66,6 +66,14 @@ class CarrierPoolTest extends TestCase
         ]);
     }
 
+    private function expectedDecodedCiphertextBytes(int $bytes): int
+    {
+        $compressed = gzcompress(str_repeat('A', $bytes), 6);
+        $this->assertIsString($compressed);
+
+        return strlen($compressed);
+    }
+
     // -------------------------------------------------------------------------
     // Authentication guard
     // -------------------------------------------------------------------------
@@ -290,7 +298,9 @@ class CarrierPoolTest extends TestCase
     #[Test]
     public function preflight_returns_sufficient_capacity(): void
     {
-        $document = $this->createDocumentWithBytes(2000000);
+        $documentBytes = 2000000;
+        $document = $this->createDocumentWithBytes($documentBytes);
+        $requiredBytes = $this->expectedDecodedCiphertextBytes($documentBytes);
 
         // Create valid carriers with known capacities
         StegoCarrier::factory()->count(3)->create([
@@ -308,20 +318,33 @@ class CarrierPoolTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('can_encode', true)
             ->assertJsonPath('available_bytes', 3000000)
-            ->assertJsonPath('required_bytes', 2000000)
+            ->assertJsonPath('required_bytes', $requiredBytes)
+            ->assertJsonPath('required_bytes_basis', 'decoded_ciphertext')
             ->assertJsonPath('valid_carriers', 3);
     }
 
     #[Test]
     public function preflight_returns_insufficient_capacity(): void
     {
-        $document = $this->createDocumentWithBytes(2000000);
+        $documentBytes = 2000000;
+        $document = $this->createDocumentWithBytes($documentBytes);
+        $requiredBytes = $this->expectedDecodedCiphertextBytes($documentBytes);
+        $availableBytes = max(1, $requiredBytes - 1);
+        $firstCarrierBytes = max(1, $availableBytes - 1);
+        $secondCarrierBytes = 1;
 
         // Create valid carriers with limited capacity
-        StegoCarrier::factory()->count(2)->create([
+        StegoCarrier::factory()->create([
             'uploaded_by' => $this->user->id,
             'validation_status' => 'valid',
-            'capacity_bytes' => 500000, // 500KB each
+            'capacity_bytes' => $firstCarrierBytes,
+            'is_in_use' => false,
+        ]);
+
+        StegoCarrier::factory()->create([
+            'uploaded_by' => $this->user->id,
+            'validation_status' => 'valid',
+            'capacity_bytes' => $secondCarrierBytes,
             'is_in_use' => false,
         ]);
 
@@ -332,15 +355,18 @@ class CarrierPoolTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('can_encode', false)
-            ->assertJsonPath('available_bytes', 1000000)
-            ->assertJsonPath('required_bytes', 2000000)
+            ->assertJsonPath('available_bytes', $availableBytes)
+            ->assertJsonPath('required_bytes', $requiredBytes)
+            ->assertJsonPath('required_bytes_basis', 'decoded_ciphertext')
             ->assertJsonPath('valid_carriers', 2);
     }
 
     #[Test]
     public function preflight_ignores_invalid_carriers(): void
     {
-        $document = $this->createDocumentWithBytes(2000000);
+        $documentBytes = 2000000;
+        $document = $this->createDocumentWithBytes($documentBytes);
+        $requiredBytes = $this->expectedDecodedCiphertextBytes($documentBytes);
 
         // Create mix of valid and invalid carriers
         StegoCarrier::factory()->count(2)->create([
@@ -365,27 +391,40 @@ class CarrierPoolTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('can_encode', true)
             ->assertJsonPath('available_bytes', 2000000)
-            ->assertJsonPath('required_bytes', 2000000)
+            ->assertJsonPath('required_bytes', $requiredBytes)
+            ->assertJsonPath('required_bytes_basis', 'decoded_ciphertext')
             ->assertJsonPath('valid_carriers', 2);
     }
 
     #[Test]
     public function preflight_ignores_carriers_in_use(): void
     {
-        $document = $this->createDocumentWithBytes(3000000);
+        $documentBytes = 3000000;
+        $document = $this->createDocumentWithBytes($documentBytes);
+        $requiredBytes = $this->expectedDecodedCiphertextBytes($documentBytes);
+        $availableBytes = max(1, $requiredBytes - 1);
+        $firstCarrierBytes = max(1, $availableBytes - 1);
+        $secondCarrierBytes = 1;
 
         // Create carriers, some in use
-        StegoCarrier::factory()->count(2)->create([
+        StegoCarrier::factory()->create([
             'uploaded_by' => $this->user->id,
             'validation_status' => 'valid',
-            'capacity_bytes' => 1000000,
+            'capacity_bytes' => $firstCarrierBytes,
+            'is_in_use' => false,
+        ]);
+
+        StegoCarrier::factory()->create([
+            'uploaded_by' => $this->user->id,
+            'validation_status' => 'valid',
+            'capacity_bytes' => $secondCarrierBytes,
             'is_in_use' => false,
         ]);
 
         StegoCarrier::factory()->count(2)->create([
             'uploaded_by' => $this->user->id,
             'validation_status' => 'valid',
-            'capacity_bytes' => 1000000,
+            'capacity_bytes' => max($requiredBytes, 1),
             'is_in_use' => true,
         ]);
 
@@ -396,8 +435,9 @@ class CarrierPoolTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('can_encode', false)
-            ->assertJsonPath('available_bytes', 2000000)
-            ->assertJsonPath('required_bytes', 3000000)
+            ->assertJsonPath('available_bytes', $availableBytes)
+            ->assertJsonPath('required_bytes', $requiredBytes)
+            ->assertJsonPath('required_bytes_basis', 'decoded_ciphertext')
             ->assertJsonPath('valid_carriers', 2);
     }
 

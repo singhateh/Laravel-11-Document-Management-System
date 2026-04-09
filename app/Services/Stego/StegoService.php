@@ -3,6 +3,7 @@
 namespace App\Services\Stego;
 
 use Exception;
+use Illuminate\Support\Facades\Log;
 use GdImage;
 use Symfony\Component\Process\Process;
 use Symfony\Component\Process\Exception\ProcessFailedException;
@@ -204,7 +205,8 @@ class StegoService
     {
         $result = $this->runPythonScript('capacity', [$carrierPath]);
 
-        return (int) $result['data'];
+        // Apply 10% safety buffer to match PHP driver and prevent edge case failures
+        return (int) ($result['data'] * 0.9);
     }
 
     /**
@@ -236,10 +238,26 @@ class StegoService
 
         if (empty($output)) {
             $stderr = trim($process->getErrorOutput());
-            throw new Exception(
-                "Python stego process produced no output. Exit code: {$process->getExitCode()}." .
-                ($stderr ? " STDERR: {$stderr}" : '')
-            );
+            
+            // Hide raw Python stack traces from users and provide friendly errors
+            if (!empty($stderr)) {
+                // Detect common error types for friendly messages
+                if (str_contains($stderr, 'ModuleNotFoundError: No module named')) {
+                    $module = trim(preg_replace('/^.*ModuleNotFoundError: No module named \'([^\']+)\'.*$/s', '$1', $stderr));
+                    throw new \RuntimeException("Missing required dependency: Python module '{$module}' not installed. Install using: pip install {$module}");
+                }
+                
+                if (str_contains($stderr, 'ImportError') || str_contains($stderr, 'SyntaxError') || str_contains($stderr, 'Traceback')) {
+                    throw new \RuntimeException("Steganography engine encountered an internal error. Please check your Python environment and dependencies.");
+                }
+                
+                // Pass through other clear error messages
+                if (preg_match('/^[A-Za-z0-9\s,.!?]+$/', $stderr) && strlen($stderr) < 200) {
+                    throw new \RuntimeException($stderr);
+                }
+            }
+            
+            throw new \RuntimeException("Steganography process failed. Please try again with a different carrier image.");
         }
 
         $decoded = json_decode($output, associative: true);
@@ -265,11 +283,40 @@ class StegoService
         }
 
         if (!is_array($decoded)) {
-            throw new Exception("Python stego script returned non-JSON output: {$output}");
+            throw new \RuntimeException("Failed to process carrier image. Please try a different image format (PNG or BMP recommended).");
         }
 
         if (empty($decoded['success'])) {
-            throw new Exception('Python stego error: ' . ($decoded['error'] ?? 'unknown error'));
+            // Log technical error for debugging while hiding from users
+            Log::error("Steganography operation failed", [
+                'error' => $decoded['error'] ?? 'unknown error',
+                'code' => $decoded['code'] ?? null,
+                'command' => $command,
+                'args' => $args,
+                'exit_code' => $process->getExitCode()
+            ]);
+            
+            $userError = $decoded['user_message'] ?? $decoded['error'] ?? null;
+            
+            // Hide internal errors, show user-friendly messages
+            if ($userError && preg_match('/^[A-Za-z0-9\s,.!?]+$/', $userError)) {
+                throw new \RuntimeException($userError);
+            }
+            
+            // Catch known error codes
+            if (isset($decoded['code'])) {
+                match ($decoded['code']) {
+                    'PAYLOAD_TOO_LARGE' => throw new \RuntimeException("File is too large for this carrier image. Use a larger image or reduce file size."),
+                    'INVALID_IMAGE_FORMAT' => throw new \RuntimeException("Unsupported image format. Please use PNG or BMP images. JPEG is not supported for LSB encoding."),
+                    'CORRUPTED_IMAGE' => throw new \RuntimeException("Carrier image appears corrupted or is not a valid bitmap file. Try a different image."),
+                    'PASSWORD_INCORRECT' => throw new \RuntimeException("Incorrect password for this document."),
+                    'PSNR_THRESHOLD_FAILED' => throw new \RuntimeException("Image quality dropped too low after encoding. Use a larger carrier image."),
+                    default => throw new \RuntimeException("Encoding failed. Please try again with a different carrier image.")
+                };
+            }
+            
+            // Generic fallback error with helpful instructions
+            throw new \RuntimeException("Encoding failed. Please try using a clean unedited PNG image that has not been compressed or re-saved.");
         }
 
         return $decoded;
@@ -296,7 +343,10 @@ class StegoService
         $bits    = $this->bytesToBits($payload);
         $bitCount = count($bits);
 
-        if ($bitCount > $pixels * 3) {
+        // Apply safety buffer: 90% of actual capacity to prevent edge case failures
+        $maxBits = (int) ($pixels * 3 * 0.9);
+
+        if ($bitCount > $maxBits) {
             imagedestroy($image);
             throw new Exception(
                 "Payload too large for carrier. Need {$bitCount} bits, capacity is " . ($pixels * 3) . " bits."

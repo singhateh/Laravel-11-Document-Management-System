@@ -44,6 +44,29 @@ class StegoDocumentService
         private readonly CarrierPoolSelector $carrierPoolSelector,
     ) {}
 
+    /**
+     * Increase PHP script execution time for long-running stego operations.
+     *
+     * Web requests can hit a 30s max_execution_time while Python subprocess
+     * work is still running, so we extend the limit here using config-based
+     * values. CLI/test runs are left untouched.
+     */
+    private function extendExecutionTimeLimit(): void
+    {
+        if (PHP_SAPI === 'cli') {
+            return;
+        }
+
+        $pythonTimeout = (int) config('stegolock.python_timeout', 60);
+        $targetSeconds = max(300, $pythonTimeout * 5);
+
+        // Some runtimes honor ini_set, others prefer set_time_limit.
+        @ini_set('max_execution_time', (string) $targetSeconds);
+        if (function_exists('set_time_limit')) {
+            @set_time_limit($targetSeconds);
+        }
+    }
+
     // =========================================================================
     // ENCODE
     // =========================================================================
@@ -69,10 +92,14 @@ class StegoDocumentService
         ?int $existingDocId = null,
         bool $useSystemCarriers = false,
     ): array {
+        $this->extendExecutionTimeLimit();
+
         // Validate inputs
         if ($userId <= 0) {
             throw new Exception('Invalid user ID');
         }
+
+        $this->extendExecutionTimeLimit();
 
         if (empty($plaintext)) {
             throw new Exception('Plaintext cannot be empty');

@@ -211,7 +211,7 @@ class StegoDocumentController extends Controller
         $request->validate([
             'document_id' => ['required', 'integer', 'exists:documents,id'],
             'carriers'    => ['nullable', 'array'],
-            'carriers.*'  => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:102400'],
+            'carriers.*'  => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:51200'],
         ]);
 
         $user     = Auth::user();
@@ -505,7 +505,8 @@ class StegoDocumentController extends Controller
      * Preflight check for encoding a document.
      *
      * Checks if the user has enough valid carriers in their pool to encode
-     * a document of the given size. Returns carrier availability status.
+     * a document, using the same payload basis as split(): decoded ciphertext
+     * bytes (compressed + encrypted payload before base64 transport encoding).
      *
      * @param  Request $request  { document_id: int }
      * @return JsonResponse      200 { can_encode, required_bytes, available_bytes, valid_carriers, message }
@@ -521,10 +522,17 @@ class StegoDocumentController extends Controller
         $useSystemCarriers = (bool) $request->boolean('use_system_carriers');
         $document = Document::findOrFail($request->document_id);
 
-        // Read document to estimate size
+        // Read document and compute required payload bytes on the same basis
+        // used by SegmentationService::split() capacity validation.
         try {
             $plaintext = $this->readDocumentPlaintext($document);
-            $requiredBytes = strlen($plaintext);
+            $compressed = gzcompress($plaintext, 6);
+            if ($compressed === false) {
+                throw new \RuntimeException('Unable to prepare document for preflight capacity check.');
+            }
+
+            // AES-GCM ciphertext length equals compressed plaintext length.
+            $requiredBytes = strlen($compressed);
         } catch (\RuntimeException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
@@ -558,13 +566,14 @@ class StegoDocumentController extends Controller
         return response()->json([
             'can_encode' => $canEncode,
             'required_bytes' => $requiredBytes,
+            'required_bytes_basis' => 'decoded_ciphertext',
             'available_bytes' => $availableBytes,
             'user_pool_bytes' => $userPoolBytes,
             'system_pool_bytes' => $systemPoolBytes,
             'valid_carriers' => $validCarrierCount,
             'message' => $canEncode
-                ? 'Sufficient carrier capacity available.'
-                : 'Insufficient carrier capacity. Please upload more carriers.',
+                ? 'Sufficient carrier capacity available for decoded ciphertext payload bytes.'
+                : 'Insufficient carrier capacity for decoded ciphertext payload bytes. Please upload more carriers.',
         ]);
     }
 
