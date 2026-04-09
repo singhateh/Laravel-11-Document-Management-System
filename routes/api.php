@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\B2UploadController;
 use App\Http\Controllers\Api\CarrierPoolController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DocumentController as ApiDocumentController;
@@ -170,6 +171,15 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
      *   Returns: 200 paginated Document objects (id, name, extension, size)
      */
     Route::post('/documents',     [ApiDocumentController::class, 'store'])->name('api.documents.store');
+    Route::post('/uploads/b2/sign', [B2UploadController::class, 'sign'])->name('api.uploads.b2.sign');
+    Route::post('/uploads/b2/finalize', [B2UploadController::class, 'finalize'])->name('api.uploads.b2.finalize');
+    Route::get('/uploads/b2/sessions/{sessionToken}/status', [B2UploadController::class, 'status'])
+        ->name('api.uploads.b2.sessions.status');
+    // Backward-compatible aliases for existing clients.
+    Route::post('/documents/direct-upload/sign', [B2UploadController::class, 'sign'])
+        ->name('api.documents.direct-upload.sign');
+    Route::post('/documents/direct-upload/finalize', [B2UploadController::class, 'finalize'])
+        ->name('api.documents.direct-upload.finalize');
     Route::get('/documents/{id}', [ApiDocumentController::class, 'show'])->name('api.documents.show')
         ->whereNumber('id');
     Route::get('/documents',      [ApiDocumentController::class, 'index'])->name('api.documents.index');

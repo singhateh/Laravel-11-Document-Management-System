@@ -4,8 +4,7 @@ import InputLabel from '@/Components/InputLabel';
 import TextInput from '@/Components/TextInput';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
-import { useForm } from '@inertiajs/react';
-import axios from 'axios';
+import { DIRECT_UPLOAD_MAX_FILE_BYTES, uploadFileDirect } from '@/utils/directUpload';
 
 interface Folder {
     id: number;
@@ -21,7 +20,7 @@ interface UploadModalProps {
     onSuccess?: () => void;
 }
 
-const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = DIRECT_UPLOAD_MAX_FILE_BYTES;
 
 const getOversizedFiles = (fileList: FileList) =>
     Array.from(fileList).filter((file) => file.size > MAX_FILE_SIZE_BYTES);
@@ -33,13 +32,17 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
     const [visibility, setVisibility] = useState<'public' | 'private'>('public');
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState('');
+    const [progressPercent, setProgressPercent] = useState(0);
+    const [activeFileLabel, setActiveFileLabel] = useState('');
+    const [canRetry, setCanRetry] = useState(false);
+    const [abortController, setAbortController] = useState<AbortController | null>(null);
     
     // Ensure folders is always an array
     const folderList = Array.isArray(folders) ? folders : [];
 
-    const handleSubmit: FormEventHandler = async (e) => {
-        e.preventDefault();
+    const startUpload = async () => {
         setError('');
+        setCanRetry(false);
 
         if (!files || files.length === 0) {
             setError('Please select files to upload');
@@ -48,41 +51,49 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
 
         const oversizedFiles = getOversizedFiles(files);
         if (oversizedFiles.length > 0) {
-            setError(`Some files exceed 100 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+            setError(`Some files exceed 50 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
             return;
         }
 
+        const resolvedFolderId = folderId || (folderList.length > 0 ? folderList[0].id : '');
+        if (!resolvedFolderId) {
+            setError('No folder available. Please create a folder first.');
+            return;
+        }
+
+        const controller = new AbortController();
+        setAbortController(controller);
         setUploading(true);
-
-        const formData = new FormData();
-        
-        // Append all files
-        for (let i = 0; i < files.length; i++) {
-            formData.append('files[]', files[i]);
-        }
-
-        if (folderName) {
-            formData.append('folder_name', folderName);
-        }
-        
-        if (folderId) {
-            formData.append('folder_id', folderId.toString());
-        }
-        
-        formData.append('visibility', visibility);
+        setProgressPercent(0);
 
         try {
-            const response = await axios.post('/upload', formData, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'multipart/form-data',
-                },
-            });
+            const selectedFiles = Array.from(files);
+
+            for (let index = 0; index < selectedFiles.length; index++) {
+                const file = selectedFiles[index];
+                setActiveFileLabel(file.name);
+
+                await uploadFileDirect({
+                    file,
+                    folderId: Number(resolvedFolderId),
+                    visibility,
+                    signal: controller.signal,
+                    retries: 1,
+                    onProgress: (progress) => {
+                        const fileWeight = selectedFiles.length > 0 ? 100 / selectedFiles.length : 100;
+                        const base = index * fileWeight;
+                        const current = (progress.percent / 100) * fileWeight;
+                        setProgressPercent(Math.min(100, Math.round(base + current)));
+                    },
+                });
+            }
 
             // Reset form
             setFiles(null);
             setFolderName('');
             setError('');
+            setProgressPercent(100);
+            setActiveFileLabel('');
             
             // Call success callback
             if (onSuccess) {
@@ -91,15 +102,17 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
             
             onClose();
         } catch (err: any) {
-            if (err.response?.data?.errors) {
-                const errors = Object.values(err.response.data.errors).flat();
-                setError(errors.join(', '));
-            } else {
-                setError(err.response?.data?.error || err.response?.data?.message || 'Upload failed');
-            }
+            setCanRetry(true);
+            setError(err?.response?.data?.message || err?.message || 'Upload failed');
         } finally {
             setUploading(false);
+            setAbortController(null);
         }
+    };
+
+    const handleSubmit: FormEventHandler = async (e) => {
+        e.preventDefault();
+        await startUpload();
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,7 +124,7 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
 
         const oversizedFiles = getOversizedFiles(selectedFiles);
         if (oversizedFiles.length > 0) {
-            setError(`Some files exceed 100 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+            setError(`Some files exceed 50 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
             setFiles(null);
             return;
         }
@@ -180,7 +193,7 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
                             hover:file:bg-indigo-100"
                     />
                     <p className="mt-1 text-xs text-gray-500">
-                        Or upload individual files by removing the folder selection attribute
+                        Supported types: PDF, DOC, DOCX, TXT. Max 50 MB per file.
                     </p>
                 </div>
 
@@ -195,7 +208,7 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
                         placeholder="Leave empty to use existing folder"
                     />
                     <p className="mt-1 text-xs text-gray-500">
-                        Auto-detected from folder upload or specify manually
+                        Optional label for your local selection.
                     </p>
                 </div>
 
@@ -219,10 +232,39 @@ export default function UploadModal({ show, onClose, folders = [], currentFolder
                     </div>
                 )}
 
+                {uploading && (
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                        <p className="text-sm text-blue-700">
+                            Uploading {activeFileLabel !== '' ? activeFileLabel : 'file'}...
+                        </p>
+                        <div className="mt-2 h-2 w-full bg-blue-100 rounded overflow-hidden">
+                            <div
+                                className="h-2 bg-blue-500 transition-all"
+                                style={{ width: `${progressPercent}%` }}
+                            />
+                        </div>
+                        <p className="mt-1 text-xs text-blue-700">{progressPercent}%</p>
+                    </div>
+                )}
+
                 <div className="mt-6 flex justify-end gap-3">
-                    <SecondaryButton onClick={onClose} disabled={uploading}>
-                        Cancel
+                    <SecondaryButton
+                        onClick={() => {
+                            if (uploading && abortController) {
+                                abortController.abort();
+                            } else {
+                                onClose();
+                            }
+                        }}
+                        disabled={false}
+                    >
+                        {uploading ? 'Cancel Upload' : 'Cancel'}
                     </SecondaryButton>
+                    {canRetry && !uploading && (
+                        <SecondaryButton onClick={startUpload}>
+                            Retry
+                        </SecondaryButton>
+                    )}
                     <PrimaryButton disabled={uploading}>
                         {uploading ? 'Uploading...' : 'Upload'}
                     </PrimaryButton>

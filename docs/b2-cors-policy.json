@@ -1,0 +1,22 @@
+[
+  {
+    "corsRuleName": "stegolock-direct-upload",
+    "allowedOrigins": [
+      "https://your-frontend-origin.example.com"
+    ],
+    "allowedOperations": [
+      "s3_put",
+      "s3_get",
+      "s3_head"
+    ],
+    "allowedHeaders": [
+      "*"
+    ],
+    "exposeHeaders": [
+      "ETag",
+      "Content-Length",
+      "Content-Type"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

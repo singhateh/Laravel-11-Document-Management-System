@@ -37,6 +37,7 @@ class Document extends Model
     protected $fillable = [
         'name', 'original_name', 'file_path', 'size', 'extension', 'folder_id', 'visibility', 'share', 'download', 'email',
         'url', 'owner_id', 'document_date', 'position',
+        'ingest_status', 'ingest_error',
         // AES-256-GCM encryption metadata
         'is_encrypted', 'enc_iv', 'enc_auth_tag', 'enc_dek_salt', 'enc_dek_iterations', 'enc_hash_sha256',
         // Document watcher fields
