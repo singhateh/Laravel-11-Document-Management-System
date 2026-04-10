@@ -17,9 +17,9 @@ class Folder extends Model
     {
         parent::boot();
 
-        // Define a global scope to always order by position
-        static::addGlobalScope('position', function ($builder) {
-            $builder->orderBy('position');
+        // Folders will be ordered alphabetically by name by default
+        static::addGlobalScope('name', function ($builder) {
+            $builder->orderBy('name', 'asc');
         });
 
         static::creating(function ($folder) {

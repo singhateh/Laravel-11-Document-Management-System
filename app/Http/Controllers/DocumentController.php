@@ -61,7 +61,7 @@ class DocumentController extends Controller
 
         $folders = generateSidebarMenu();
         $owners = User::get(['id', 'name', 'email']);
-        $rightFolders = Folder::get(['id', 'name']);
+        $rightFolders = Folder::orderBy('name', 'asc')->get(['id', 'name']);
 
         return Inertia::render('Documents/Index', [
             'documents' => $documents,

@@ -18,26 +18,6 @@ const EXTENSION_TO_MIME: Record<string, string> = {
     txt: 'text/plain',
 };
 
-interface SignDirectUploadResponse {
-    session_token: string;
-    idempotency_token: string;
-    object_key: string;
-    upload_url: string;
-    headers: Record<string, string>;
-    expires_at: string;
-}
-
-interface FinalizeDirectUploadResponse {
-    message: string;
-    status: string;
-    session_token: string;
-    document: {
-        id: number;
-        ingest_status: string;
-        ingest_error: string | null;
-    };
-}
-
 export interface UploadProgressSnapshot {
     loadedBytes: number;
     totalBytes: number;
@@ -90,34 +70,21 @@ export async function uploadFileDirect(options: UploadFileDirectOptions): Promis
         throw new Error(`File exceeds 50 MB limit: ${file.name}`);
     }
 
-    const mimeType = resolveSupportedMimeType(file);
+    resolveSupportedMimeType(file);
 
     const maxAttempts = Math.max(1, retries + 1);
     let lastError: unknown = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            const signResponse = await axios.post<SignDirectUploadResponse>(
-                '/api/uploads/b2/sign',
-                {
-                    original_filename: file.name,
-                    size: Math.ceil(file.size / 1024),
-                    mime_type: mimeType,
-                    folder_id: folderId,
-                    visibility,
-                    idempotency_token: idempotencyToken,
-                },
-                { signal }
-            );
+            const formData = new FormData();
+            formData.append('folder_id', String(folderId));
+            formData.append('visibility', visibility);
+            formData.append('files', file);
 
-            const { upload_url, headers, session_token, object_key } = signResponse.data;
-
-            await axios.put(upload_url, file, {
+            await axios.post('/upload', formData, {
                 signal,
-                headers: {
-                    ...headers,
-                    'Content-Type': mimeType,
-                },
+                headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (event) => {
                     const loadedBytes = Math.max(0, event.loaded ?? 0);
                     const totalBytes = Math.max(file.size, event.total ?? file.size);
@@ -129,21 +96,10 @@ export async function uploadFileDirect(options: UploadFileDirectOptions): Promis
                 },
             });
 
-            const finalizeResponse = await axios.post<FinalizeDirectUploadResponse>(
-                '/api/uploads/b2/finalize',
-                {
-                    session_token,
-                    object_key,
-                    file_size: file.size,
-                    mime_type: mimeType,
-                },
-                { signal }
-            );
-
             return {
-                sessionToken: finalizeResponse.data.session_token,
-                documentId: finalizeResponse.data.document.id,
-                ingestStatus: finalizeResponse.data.status,
+                sessionToken: idempotencyToken ?? '',
+                documentId: 0,
+                ingestStatus: 'completed',
             };
         } catch (error: unknown) {
             lastError = error;

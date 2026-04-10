@@ -198,8 +198,8 @@ class StegoDocumentService
             $coreData = [
                 'document_id'       => $documentId,
                 'user_id'           => $userId,
-                // Keep heavy ciphertext out of DB for faster local fetches.
-                'ciphertext'        => null,
+                // Keep ciphertext local (DB) to avoid cloud roundtrips on slow object storage.
+                'ciphertext'        => $encrypted['ciphertext'],
                 'stego_iv'          => $encrypted['iv'],
                 'stego_auth_tag'    => $encrypted['auth_tag'],
                 'stego_hash_sha256' => $hash,
@@ -213,14 +213,6 @@ class StegoDocumentService
             $stegoDoc = $existingDocId
                 ? $this->persistence->updateStegoDocument($existingDocId, $coreData)
                 : $this->persistence->createStegoDocument($coreData);
-
-            // Persist base64 ciphertext to configured cloud disk and store its object key.
-            $ciphertextPath = $this->uploadCiphertextToCloud($userId, $stegoDoc->id, $encrypted['ciphertext']);
-            $stegoDoc->update([
-                'ciphertext' => null,
-                's3_key'     => $ciphertextPath,
-            ]);
-            $stegoDoc = $stegoDoc->fresh();
 
             foreach ($segments as $seg) {
                 $idx        = $seg['index'];
@@ -293,9 +285,11 @@ class StegoDocumentService
 
             $stegoDoc->update(['status' => 'ready']);
 
-            // Bust the user's paginated list cache so the new document
-            // appears immediately on the next index() request.
-            Cache::forget("stego.index.u{$userId}");
+            // Bust all cached variants of the user's stego index responses.
+            Cache::forget("stego.index.u{$userId}.status.all");
+            Cache::forget("stego.index.u{$userId}.status.pending");
+            Cache::forget("stego.index.u{$userId}.status.ready");
+            Cache::forget("stego.index.u{$userId}.status.failed");
 
         } catch (\Throwable $e) {
             if ($carriersLocked && $selectedCarriers !== null) {
@@ -563,14 +557,6 @@ class StegoDocumentService
         }
 
         return 'binary';
-    }
-
-    private function uploadCiphertextToCloud(int $userId, int $stegoDocumentId, string $base64Ciphertext): string
-    {
-        $key = $this->cloud->documentKey($userId, $stegoDocumentId) . '.enc';
-        $result = $this->cloud->uploadContent($base64Ciphertext, $key);
-
-        return $result['s3_key'];
     }
 
     private function loadCiphertextForDecode($stegoDoc): string

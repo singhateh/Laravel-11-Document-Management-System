@@ -1,22 +1,24 @@
-[
-  {
-    "corsRuleName": "stegolock-direct-upload",
-    "allowedOrigins": [
-      "https://your-frontend-origin.example.com"
-    ],
-    "allowedOperations": [
-      "s3_put",
-      "s3_get",
-      "s3_head"
-    ],
-    "allowedHeaders": [
-      "*"
-    ],
-    "exposeHeaders": [
-      "ETag",
-      "Content-Length",
-      "Content-Type"
-    ],
-    "maxAgeSeconds": 3600
-  }
-]
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "http://test-caps.test",
+        "https://test-caps.test"
+      ],
+      "AllowedMethods": [
+        "PUT",
+        "GET",
+        "HEAD"
+      ],
+      "AllowedHeaders": [
+        "*"
+      ],
+      "ExposeHeaders": [
+        "ETag",
+        "Content-Length",
+        "Content-Type"
+      ],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}

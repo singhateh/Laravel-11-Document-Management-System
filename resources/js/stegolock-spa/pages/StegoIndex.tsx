@@ -6,6 +6,8 @@ import SpaLayout from '../components/SpaLayout';
 interface StegoDoc {
     id: number;
     document: { id: number; name: string; extension: string } | null;
+    status: 'pending' | 'ready' | 'failed';
+    failed_reason?: string | null;
     segments_count: number;
     created_at: string;
     stego_hash_sha256: string;
@@ -56,6 +58,7 @@ export default function StegoIndex() {
                             <tr>
                                 <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Document</th>
                                 <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Segments</th>
+                                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status</th>
                                 <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">SHA-256</th>
                                 <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Encoded</th>
                                 <th className="px-5 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
@@ -74,7 +77,15 @@ export default function StegoIndex() {
                                         </div>
                                     </td>
                                     <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-600">{d.segments_count}</td>
-                                    <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-400">{d.stego_hash_sha256?.slice(0, 16)}…</td>
+                                    <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-600">
+                                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${d.status === 'ready' ? 'bg-green-100 text-green-800' : d.status === 'failed' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>
+                                            {d.status}
+                                        </span>
+                                        {d.status === 'failed' && d.failed_reason && (
+                                            <p className="mt-1 max-w-xs truncate text-xs text-red-600" title={d.failed_reason}>{d.failed_reason}</p>
+                                        )}
+                                    </td>
+                                    <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-400">{d.stego_hash_sha256 ? `${d.stego_hash_sha256.slice(0, 16)}...` : '—'}</td>
                                     <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-500">{new Date(d.created_at).toLocaleDateString()}</td>
                                     <td className="whitespace-nowrap px-5 py-4 text-right">
                                         <div className="flex items-center justify-end gap-2">

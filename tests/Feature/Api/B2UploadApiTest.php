@@ -119,6 +119,45 @@ class B2UploadApiTest extends TestCase
     }
 
     #[Test]
+    public function sign_succeeds_when_storage_adapter_returns_associative_payload(): void
+    {
+        $user = $this->createApiUser('b2signassoc');
+        $folder = Folder::create([
+            'name' => 'Uploads Assoc',
+            'visibility' => 'public',
+        ]);
+
+        $uploadUrl = 'https://b2.example/assoc-upload-url';
+        $signedHeaders = ['Authorization' => 'assoc-signature'];
+        $fakeDisk = new FakeB2Disk(
+            $uploadUrl,
+            $signedHeaders,
+            1024,
+            'application/pdf',
+            str_repeat('A', 1024),
+            true
+        );
+
+        Storage::shouldReceive('disk')
+            ->once()
+            ->with('b2')
+            ->andReturn($fakeDisk);
+
+        $response = $this->actingAs($user, 'sanctum')->postJson('/api/uploads/b2/sign', [
+            'original_filename' => 'assoc-report.pdf',
+            'size' => 1,
+            'mime_type' => 'application/pdf',
+            'folder_id' => $folder->id,
+            'visibility' => 'private',
+            'idempotency_token' => 'idem-sign-assoc',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('upload_url', $uploadUrl)
+            ->assertJsonPath('headers.Authorization', 'assoc-signature');
+    }
+
+    #[Test]
     public function finalize_succeeds_after_sign_with_mocked_b2_disk_behaviour(): void
     {
         $user = $this->createApiUser('b2finalizesuccess');
@@ -183,6 +222,57 @@ class B2UploadApiTest extends TestCase
         $this->assertSame($objectKey, $fakeDisk->deletedObjectKey);
     }
 
+    #[Test]
+    public function finalize_succeeds_with_non_kib_aligned_size_when_signed_with_size_bytes(): void
+    {
+        $user = $this->createApiUser('b2finalizebytesize');
+        $folder = Folder::create([
+            'name' => 'Finalize Byte Size',
+            'visibility' => 'public',
+        ]);
+
+        $exactSize = 1501;
+        $uploadedContent = str_repeat('A', $exactSize);
+        $fakeDisk = new FakeB2Disk(
+            'https://b2.example/mock-upload-url',
+            ['Authorization' => 'mock-signature'],
+            $exactSize,
+            'application/pdf',
+            $uploadedContent
+        );
+
+        Storage::shouldReceive('disk')
+            ->times(2)
+            ->with('b2')
+            ->andReturn($fakeDisk);
+
+        $signResponse = $this->actingAs($user, 'sanctum')->postJson('/api/uploads/b2/sign', [
+            'original_filename' => 'bytes-report.pdf',
+            'size_bytes' => $exactSize,
+            'mime_type' => 'application/pdf',
+            'folder_id' => $folder->id,
+            'visibility' => 'public',
+            'idempotency_token' => 'idem-finalize-byte-size',
+        ]);
+
+        $signResponse->assertOk();
+
+        $sessionToken = (string) $signResponse->json('session_token');
+        $objectKey = (string) $signResponse->json('object_key');
+
+        $finalizeResponse = $this->actingAs($user, 'sanctum')->postJson('/api/uploads/b2/finalize', [
+            'session_token' => $sessionToken,
+            'object_key' => $objectKey,
+            'file_size' => $exactSize,
+            'mime_type' => 'application/pdf',
+        ]);
+
+        $finalizeResponse->assertStatus(201)
+            ->assertJsonPath('document.size', $exactSize)
+            ->assertJsonPath('document.folder_id', $folder->id)
+            ->assertJsonPath('document.owner_id', $user->id);
+    }
+
     private function createApiUser(string $username): User
     {
         /** @var User $user */
@@ -207,6 +297,7 @@ class FakeB2Disk
         private readonly int $expectedSize,
         private readonly string $expectedMime,
         private readonly string $content,
+        private readonly bool $associativeSignPayload = false,
     ) {}
 
     public function temporaryUploadUrl(string $objectKey, $expiresAt, array $options): array
@@ -216,6 +307,13 @@ class FakeB2Disk
         }
 
         $this->signedObjectKey = $objectKey;
+
+        if ($this->associativeSignPayload) {
+            return [
+                'url' => $this->uploadUrl,
+                'headers' => $this->headers,
+            ];
+        }
 
         return [$this->uploadUrl, $this->headers];
     }

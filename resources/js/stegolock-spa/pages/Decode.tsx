@@ -5,6 +5,7 @@ import SpaLayout from '../components/SpaLayout';
 interface StegoDoc {
     id: number;
     document: { id: number; name: string; extension: string } | null;
+    status: 'pending' | 'ready' | 'failed';
     segments_count: number;
     created_at: string;
     decoding_status?: string;
@@ -22,7 +23,7 @@ export default function Decode() {
     const [isDownloading, setIsDownloading] = useState(false);
 
     useEffect(() => {
-        axios.get('/api/stego').then((r) => setDocs(r.data.data ?? r.data)).catch(console.error);
+        axios.get('/api/stego?status=ready').then((r) => setDocs(r.data.data ?? r.data)).catch(console.error);
     }, []);
 
     useEffect(() => {
@@ -171,7 +172,7 @@ export default function Decode() {
             <div className="rounded-xl bg-white p-6 shadow-sm">
                 <h2 className="mb-4 font-semibold text-gray-800">Select stego document to decode</h2>
                 {docs.length === 0 ? (
-                    <p className="text-sm text-gray-500">No encoded documents found. Encode one first.</p>
+                    <p className="text-sm text-gray-500">No ready stego documents found. Encode one first, then wait for processing to finish.</p>
                 ) : (
                     <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                         {docs.map((d) => (

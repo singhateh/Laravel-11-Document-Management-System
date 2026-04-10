@@ -57,18 +57,29 @@ class StegoDocumentController extends Controller
      *
      * @return JsonResponse
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $allowedStatuses = ['pending', 'ready', 'failed'];
+        $statusFilter = $request->query('status');
+
+        if ($statusFilter !== null && !in_array($statusFilter, $allowedStatuses, true)) {
+            return response()->json([
+                'message' => 'Invalid status filter. Allowed values: pending, ready, failed.',
+            ], 422);
+        }
+
         $docs = Cache::remember(
-            'stego.index.u' . Auth::id(),
+            'stego.index.u' . Auth::id() . '.status.' . ($statusFilter ?? 'all'),
             30,
             fn () => Auth::user()
                 ->stegoDocuments()
+                ->when($statusFilter !== null, fn ($q) => $q->where('status', $statusFilter))
                 ->select([
                     'id',
                     'document_id',
                     'user_id',
                     'status',
+                    'failed_reason',
                     'decoding_status',
                     'download_path',
                     'created_at',
@@ -296,9 +307,19 @@ class StegoDocumentController extends Controller
                   );
             })
             ->where('id', $request->stego_document_id)
-            ->select(['id', 'document_id', 'user_id'])
+            ->select(['id', 'document_id', 'user_id', 'status', 'failed_reason'])
             ->with('document')
             ->firstOrFail();
+
+        if ($stegoDoc->status !== 'ready') {
+            $details = $stegoDoc->status === 'failed' && !empty($stegoDoc->failed_reason)
+                ? ' Reason: ' . $stegoDoc->failed_reason
+                : '';
+
+            return response()->json([
+                'message' => "This stego document is not ready for decoding (status: {$stegoDoc->status}).{$details}",
+            ], 422);
+        }
 
         // Update stego document status to indicate decoding is pending
         $stegoDoc->update([

@@ -7,6 +7,7 @@ import axios from 'axios';
 interface StegoDoc {
     id: number;
     document: { id: number; name: string; extension: string } | null;
+    status?: 'pending' | 'ready' | 'failed';
     segments_count: number;
     created_at: string;
     decoding_status?: string;

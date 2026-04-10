@@ -33,6 +33,7 @@ class StegoWebController extends Controller
                 'document_id',
                 'user_id',
                 'status',
+                'failed_reason',
                 'decoding_status',
                 'download_path',
                 'created_at',
@@ -130,10 +131,12 @@ class StegoWebController extends Controller
         $user = Auth::user();
 
         $stegoDocs = StegoDocument::where('user_id', $user->id)
+            ->where('status', 'ready')
             ->select([
                 'id',
                 'document_id',
                 'user_id',
+                'status',
                 'decoding_status',
                 'decoding_error',
                 'download_path',
@@ -150,6 +153,7 @@ class StegoWebController extends Controller
                     'name'      => $s->document->name,
                     'extension' => $s->document->extension,
                 ] : null,
+                'status'         => $s->status,
                 'segments_count' => $s->segments_count,
                 'decoding_status' => $s->decoding_status,
                 'decoding_error'  => $s->decoding_error,
@@ -179,9 +183,19 @@ class StegoWebController extends Controller
         // Verify ownership
         $stegoDoc = StegoDocument::where('user_id', $user->id)
             ->where('id', $request->stego_document_id)
-            ->select(['id', 'document_id', 'user_id'])
+            ->select(['id', 'document_id', 'user_id', 'status', 'failed_reason'])
             ->with('document')
             ->firstOrFail();
+
+        if ($stegoDoc->status !== 'ready') {
+            $details = $stegoDoc->status === 'failed' && !empty($stegoDoc->failed_reason)
+                ? ' Reason: ' . $stegoDoc->failed_reason
+                : '';
+
+            return back()->withErrors([
+                'decode' => "This stego document is not ready for decoding (status: {$stegoDoc->status}).{$details}",
+            ]);
+        }
 
         // Keep web decode state aligned with API decode workflow.
         $stegoDoc->update([

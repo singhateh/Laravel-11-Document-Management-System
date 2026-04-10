@@ -31,7 +31,8 @@ class B2UploadController extends Controller
         $request->validate([
             'original_filename' => ['required', 'string', 'max:255'],
             'mime_type' => ['required', 'string', 'in:application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'],
-            'size' => ['required', 'integer', 'min:1', 'max:51200'], // KB
+            'size' => ['required_without:size_bytes', 'integer', 'min:1', 'max:51200'], // KB
+            'size_bytes' => ['required_without:size', 'integer', 'min:1', 'max:' . self::MAX_UPLOAD_BYTES],
             'folder_id' => ['required', 'integer', 'exists:folders,id'],
             'visibility' => ['sometimes', 'in:public,private'],
             'idempotency_token' => ['sometimes', 'string', 'max:100'],
@@ -48,8 +49,10 @@ class B2UploadController extends Controller
 
         $originalName = (string) $request->input('original_filename');
         $sanitizedName = preg_replace('/[^A-Za-z0-9._-]/', '_', $originalName) ?: 'upload.bin';
-        $sizeKb = (int) $request->input('size');
-        $sizeBytes = $sizeKb * 1024;
+        $sizeBytesInput = $request->input('size_bytes');
+        $sizeBytes = $sizeBytesInput !== null
+            ? (int) $sizeBytesInput
+            : ((int) $request->input('size') * 1024);
         $mimeType = (string) $request->input('mime_type');
         $folderId = (int) $request->input('folder_id');
         $visibility = (string) $request->input('visibility', 'public');
@@ -66,7 +69,7 @@ class B2UploadController extends Controller
             $sanitizedName
         );
 
-        /** @var array{0:string,1:array<string,string>} $signedUpload */
+        /** @var mixed $signedUpload */
         $signedUpload = call_user_func(
             [$disk, 'temporaryUploadUrl'],
             $objectKey,
@@ -74,7 +77,54 @@ class B2UploadController extends Controller
             ['ContentType' => $mimeType]
         );
 
-        [$uploadUrl, $headers] = $signedUpload;
+        $uploadUrl = null;
+        $headers = [];
+
+        if (is_array($signedUpload)) {
+            $candidateUrl = $signedUpload['url'] ?? $signedUpload[0] ?? null;
+            $candidateHeaders = $signedUpload['headers'] ?? $signedUpload[1] ?? [];
+
+            if (is_string($candidateUrl) && $candidateUrl !== '') {
+                $uploadUrl = $candidateUrl;
+            }
+
+            if (is_array($candidateHeaders)) {
+                $headers = $candidateHeaders;
+            }
+        }
+
+        if (is_array($headers)) {
+            $headers = collect($headers)
+                ->reject(function ($value, $name): bool {
+                    if (!is_string($name)) {
+                        return true;
+                    }
+
+                    $normalized = strtolower(trim($name));
+
+                    return in_array($normalized, [
+                        'host',
+                        'origin',
+                        'referer',
+                        'user-agent',
+                        'content-length',
+                    ], true);
+                })
+                ->mapWithKeys(function ($value, $name): array {
+                    if (!is_scalar($value)) {
+                        return [];
+                    }
+
+                    return [(string) $name => (string) $value];
+                })
+                ->all();
+        }
+
+        if (!is_string($uploadUrl) || $uploadUrl === '') {
+            return response()->json([
+                'message' => 'Failed to generate temporary upload URL from the storage adapter.',
+            ], 500);
+        }
 
         $session = B2UploadSession::create([
             'session_token' => (string) Str::uuid(),

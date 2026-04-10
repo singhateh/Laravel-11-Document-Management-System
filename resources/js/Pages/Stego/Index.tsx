@@ -7,6 +7,8 @@ import ShareModal from '@/Components/ShareModal';
 interface StegoDoc {
     id: number;
     document: { id: number; name: string; extension: string } | null;
+    status: 'pending' | 'ready' | 'failed';
+    failed_reason?: string | null;
     segments_count: number;
     created_at: string;
     stego_hash_sha256: string;
@@ -114,6 +116,9 @@ export default function Index({ auth, stegoDocs, flash }: StegoIndexProps) {
                                             Segments
                                         </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Status
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                                             SHA-256 (truncated)
                                         </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -143,8 +148,16 @@ export default function Index({ auth, stegoDocs, flash }: StegoIndexProps) {
                                             <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
                                                 {s.segments_count} carrier{s.segments_count !== 1 ? 's' : ''}
                                             </td>
+                                            <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-600">
+                                                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${s.status === 'ready' ? 'bg-green-100 text-green-800' : s.status === 'failed' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'}`}>
+                                                    {s.status}
+                                                </span>
+                                                {s.status === 'failed' && s.failed_reason && (
+                                                    <p className="mt-1 max-w-xs truncate text-xs text-red-600" title={s.failed_reason}>{s.failed_reason}</p>
+                                                )}
+                                            </td>
                                             <td className="whitespace-nowrap px-6 py-4 font-mono text-xs text-gray-400">
-                                                {s.stego_hash_sha256?.slice(0, 16)}…
+                                                {s.stego_hash_sha256 ? `${s.stego_hash_sha256.slice(0, 16)}...` : '—'}
                                             </td>
                                             <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
                                                 {new Date(s.created_at).toLocaleString()}
