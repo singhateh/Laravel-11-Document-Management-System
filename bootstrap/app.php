@@ -71,7 +71,15 @@ return Application::configure(basePath: dirname(__DIR__))
         // 405 — Method not allowed
         $exceptions->renderable(function (\Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException $e, $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
-                return response()->json(['message' => 'Method not allowed.'], 405);
+                $payload = ['message' => 'Method not allowed.'];
+
+                if ((bool) config('app.debug')) {
+                    $payload['method'] = $request->method();
+                    $payload['path'] = $request->path();
+                    $payload['allowed_methods'] = $e->getHeaders()['Allow'] ?? null;
+                }
+
+                return response()->json($payload, 405);
             }
         });
 

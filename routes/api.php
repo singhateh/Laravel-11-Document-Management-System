@@ -1,9 +1,14 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\B2UploadController;
+use App\Http\Controllers\Api\CarrierPoolController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DocumentController as ApiDocumentController;
+use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\StegoDocumentController;
+use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\NotificationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -102,12 +107,42 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
             ->name('documents.grants.index')
             ->whereNumber('id');
 
-        // Revoke a viewer's access (owner only)
-        Route::delete('/documents/{id}/grant/{viewer_user_id}',   [StegoDocumentController::class, 'revokeGrant'])
-            ->name('documents.grant.revoke')
-            ->whereNumber(['id', 'viewer_user_id']);
+         // Estimate decoding time (owner OR granted viewer)
+         Route::get('/documents/{id}/estimate-decoding-time', [StegoDocumentController::class, 'estimateDecodingTime'])
+             ->name('documents.estimate-decoding-time')
+             ->whereNumber('id');
 
-    });
+         // Revoke a viewer's access (owner only)
+         Route::delete('/documents/{id}/grant/{viewer_user_id}',   [StegoDocumentController::class, 'revokeGrant'])
+             ->name('documents.grant.revoke')
+             ->whereNumber(['id', 'viewer_user_id']);
+
+         // -----------------------------------------------------------------
+         // Carrier Pool Management
+         // -----------------------------------------------------------------
+
+         // List carriers in the pool (with optional status filter)
+         Route::get('/carriers', [CarrierPoolController::class, 'index'])
+             ->name('carriers.index');
+
+         // Upload a carrier into the pool
+         Route::post('/carriers', [CarrierPoolController::class, 'store'])
+             ->name('carriers.store');
+
+         // Remove a carrier from the pool
+         Route::delete('/carriers/{id}', [CarrierPoolController::class, 'destroy'])
+             ->name('carriers.destroy')
+             ->whereNumber('id');
+
+         // Preflight check — verify pool has sufficient capacity before encoding
+         Route::post('/preflight', [StegoDocumentController::class, 'preflight'])
+             ->name('preflight');
+
+        // Validate cloud presence for carrier keys and stego document artifacts
+        Route::post('/cloud/validate', [StegoDocumentController::class, 'validateCloudFiles'])
+            ->name('cloud.validate');
+
+     });
 
     // SPA convenience aliases
     Route::get('/user',  [AuthController::class, 'me'])->name('api.user');
@@ -136,18 +171,33 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
      *   Returns: 200 paginated Document objects (id, name, extension, size)
      */
     Route::post('/documents',     [ApiDocumentController::class, 'store'])->name('api.documents.store');
+    Route::post('/uploads/b2/sign', [B2UploadController::class, 'sign'])->name('api.uploads.b2.sign');
+    Route::post('/uploads/b2/finalize', [B2UploadController::class, 'finalize'])->name('api.uploads.b2.finalize');
+    Route::get('/uploads/b2/sessions/{sessionToken}/status', [B2UploadController::class, 'status'])
+        ->name('api.uploads.b2.sessions.status');
+    // Backward-compatible aliases for existing clients.
+    Route::post('/documents/direct-upload/sign', [B2UploadController::class, 'sign'])
+        ->name('api.documents.direct-upload.sign');
+    Route::post('/documents/direct-upload/finalize', [B2UploadController::class, 'finalize'])
+        ->name('api.documents.direct-upload.finalize');
     Route::get('/documents/{id}', [ApiDocumentController::class, 'show'])->name('api.documents.show')
         ->whereNumber('id');
     Route::get('/documents',      [ApiDocumentController::class, 'index'])->name('api.documents.index');
 
-     // Dashboard stats / recent (for SPA)
-      Route::prefix('dashboard')->group(function () {
-          Route::get('/stats',  [DashboardController::class, 'stats']);
-          Route::get('/recent', [DashboardController::class, 'recent']);
-      });
+    // Role management endpoints
+    Route::get('/roles', [RoleController::class, 'index'])->name('api.roles.index');
+    Route::get('/roles/{role}/permissions', [RoleController::class, 'permissions'])->name('api.roles.permissions');
 
-      // User search endpoint
-      Route::get('/users', [\App\Http\Controllers\UserController::class, 'search'])->name('api.users.search');
+    // User management endpoints
+    Route::get('/users', [UserController::class, 'index'])->name('api.users.index');
+    Route::put('/users/{id}/role', [UserController::class, 'updateRole'])->name('api.users.updateRole')->whereNumber('id');
+    Route::get('/users/search', [\App\Http\Controllers\UserController::class, 'search'])->name('api.users.search');
+
+    // Dashboard stats / recent (for SPA)
+    Route::prefix('dashboard')->group(function () {
+        Route::get('/stats',  [DashboardController::class, 'stats']);
+        Route::get('/recent', [DashboardController::class, 'recent']);
+    });
 
      // Collaboration and sharing endpoints
      Route::prefix('collaboration')->name('api.collaboration.')->group(function () {
@@ -162,6 +212,18 @@ Route::middleware(['auth:sanctum', 'throttle:300,1'])->group(function () {
              ->name('shares.revoke');
          Route::get('/shares', [\App\Http\Controllers\ShareDocumentController::class, 'listSharedDocuments'])
              ->name('shares.list');
+     });
+
+     // Notification endpoints
+     Route::prefix('notifications')->name('api.notifications.')->group(function () {
+         Route::get('/', [NotificationController::class, 'fetchNotifications'])
+             ->name('index');
+         Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])
+             ->whereNumber('notification')
+             ->name('read');
+         Route::post('/{notification}/dismiss', [NotificationController::class, 'dismiss'])
+             ->whereNumber('notification')
+             ->name('dismiss');
      });
 
  });

@@ -139,17 +139,18 @@ class SegmentationService
 
     /**
      * Split a base64-encoded ciphertext into dynamic-sized binary chunks based on
-     * carrier capacities, assigning one chunk per carrier. This minimizes LSB
-     * modifications per carrier by distributing payload evenly across available
-     * capacity, resulting in higher PSNR for each stego-image.
+     * carrier capacities, assigning one chunk per selected carrier.
+     *
+     * Uses greedy bin-packing: largest carriers are filled first until the full
+     * payload is consumed. This reduces the number of carriers needed.
      *
      * Each chunk is validated against its carrier's byte capacity before the
      * array is returned so the caller gets a clean all-or-nothing result.
      *
      * @param  string $base64Ciphertext  Base64-encoded ciphertext from CryptoService::encrypt()
      * @param  int[]  $carrierCapacities Byte capacity of each available carrier (index-aligned)
-     * @return array<int, array{ index: int, chunk: string, hash: string }>
-     *         Each element: segment_index (0-based), raw binary chunk, SHA-256 of chunk
+     * @return array<int, array{ index: int, carrier_index: int, chunk: string, hash: string }>
+     *         Each element: sequential segment_index, mapped carrier_index, raw binary chunk, SHA-256 of chunk
      * @throws \RuntimeException If total capacity insufficient, or a carrier is too small
      * @throws Exception         If the base64 ciphertext is malformed
      */
@@ -162,89 +163,83 @@ class SegmentationService
         }
 
         $dataLength = strlen($rawData);
-        $totalCapacity = array_sum($carrierCapacities);
-        $numCarriers = count($carrierCapacities);
-
-        if ($totalCapacity < $dataLength) {
-            throw new \RuntimeException(
-                "Total carrier capacity ({$totalCapacity} bytes) is insufficient for data size ({$dataLength} bytes)."
-            );
+        if ($dataLength === 0) {
+            throw new Exception('Ciphertext payload is empty; cannot split().');
         }
 
-        // First, calculate how many carriers we actually need (each must hold at least 1 byte)
-        $requiredCarriers = $this->recommendedSegmentCount($dataLength, $carrierCapacities);
-        
-        if ($requiredCarriers > $numCarriers) {
-            $need  = $requiredCarriers;
-            $have  = $numCarriers;
-            $short = $need - $have;
-            throw new \RuntimeException(
-                "Document requires {$need} carrier image(s) but only {$have} were uploaded. " .
-                "Please add {$short} more carrier image(s)."
-            );
+        if (empty($carrierCapacities)) {
+            throw new Exception('No carriers available for split().');
         }
 
-        // Use only the required number of carriers (largest ones first for optimal distribution)
-        $sortedCapacities = array_map(null, $carrierCapacities, array_keys($carrierCapacities));
-        usort($sortedCapacities, function ($a, $b) {
-            return $b[0] <=> $a[0]; // Sort by capacity descending
+        $carriers = [];
+        foreach ($carrierCapacities as $index => $capacity) {
+            $normalized = (int) $capacity;
+
+            if ($normalized <= 0) {
+                continue;
+            }
+
+            $carriers[] = [
+                'carrier_index' => (int) $index,
+                'capacity'      => $normalized,
+            ];
+        }
+
+        if (empty($carriers)) {
+            throw new Exception('No carriers with usable capacity were provided.');
+        }
+
+        usort($carriers, function (array $a, array $b): int {
+            if ($a['capacity'] === $b['capacity']) {
+                return $a['carrier_index'] <=> $b['carrier_index'];
+            }
+
+            return $b['capacity'] <=> $a['capacity'];
         });
-        
-        $selectedCapacities = array_slice($sortedCapacities, 0, $requiredCarriers);
-        $selectedTotalCapacity = array_sum(array_column($selectedCapacities, 0));
 
-        // Calculate chunk sizes based on selected carrier capacities (proportional distribution)
-        $chunkSizes = [];
-        $remainingData = $dataLength;
+        $totalCapacity = array_sum(array_column($carriers, 'capacity'));
 
-        foreach ($selectedCapacities as $index => list($capacity, $originalIndex)) {
-            // Calculate proportional chunk size for this carrier
-            $chunkSize = (int) round($dataLength * ($capacity / $selectedTotalCapacity));
-            
-            // Ensure we don't exceed remaining data or carrier capacity
-            $chunkSize = min($chunkSize, $remainingData, $capacity);
-            
-            // Handle edge case where rounding might leave small remaining data
-            if ($index === $requiredCarriers - 1) {
-                $chunkSize = $remainingData;
-            }
-            
-            $chunkSizes[$originalIndex] = $chunkSize;
-            $remainingData -= $chunkSize;
+        // Carrier capacities are already safety-buffered (90% usable), so
+        // compare directly against the raw chunk payload length.
+        $requiredCapacity = $dataLength;
+
+        if ($totalCapacity < $requiredCapacity) {
+            throw new \RuntimeException(
+                "Total carrier capacity ({$totalCapacity} bytes) is insufficient for data size ({$dataLength} bytes). Need at least {$requiredCapacity} bytes."
+            );
         }
 
-        // Verify all chunks fit within their carrier capacities
-        foreach ($chunkSizes as $index => $chunkSize) {
-            if ($chunkSize > $carrierCapacities[$index]) {
-                $minDim = (int) ceil(sqrt(($chunkSize * 8) / 3));
-                throw new \RuntimeException(
-                    'Carrier image ' . ($index + 1) . ' is too small. ' .
-                    'Needs ' . $chunkSize . ' bytes but its capacity is only ' . $carrierCapacities[$index] . ' bytes. ' .
-                    "Use an image of at least {$minDim}×{$minDim} pixels."
-                );
-            }
-        }
+        $requiredCarriers = $this->recommendedSegmentCount($dataLength, $carrierCapacities);
+        $selectedCarriers = array_slice($carriers, 0, $requiredCarriers);
 
-        // Split data into calculated chunks
+        // Split data greedily: fill largest carrier first, then continue.
         $segments = [];
         $offset = 0;
+        $segmentIndex = 0;
 
-        foreach ($chunkSizes as $index => $chunkSize) {
+        foreach ($selectedCarriers as $carrier) {
+            if ($offset >= $dataLength) {
+                break;
+            }
+
+            $remaining = $dataLength - $offset;
+            $chunkSize = min($carrier['capacity'], $remaining);
             $chunk = substr($rawData, $offset, $chunkSize);
-            
+
             $segments[] = [
-                'index' => $index,
-                'chunk' => $chunk,
-                'hash'  => hash('sha256', $chunk),
+                'index'         => $segmentIndex,
+                'carrier_index' => $carrier['carrier_index'],
+                'chunk'         => $chunk,
+                'hash'          => hash('sha256', $chunk),
             ];
-            
+
             $offset += $chunkSize;
+            $segmentIndex++;
         }
 
-        // Sort segments by original index to maintain consistency
-        usort($segments, function ($a, $b) {
-            return $a['index'] <=> $b['index'];
-        });
+        if ($offset < $dataLength) {
+            throw new \RuntimeException('Combined carrier capacity is insufficient for the ciphertext size.');
+        }
 
         return $segments;
     }
@@ -265,13 +260,24 @@ class SegmentationService
      */
     public function recommendedSegmentCount(int $dataLength, array $carrierCapacities): int
     {
-        $numCarriers = count($carrierCapacities);
+        if ($dataLength <= 0) {
+            throw new Exception('Data length must be greater than zero.');
+        }
 
-        if ($numCarriers === 0) {
+        if (empty($carrierCapacities)) {
             throw new Exception('No carriers available for segmentation.');
         }
 
-        $totalCapacity = array_sum($carrierCapacities);
+        $normalized = array_values(array_filter(
+            array_map(fn ($capacity) => (int) $capacity, $carrierCapacities),
+            fn ($capacity) => $capacity > 0
+        ));
+
+        if (empty($normalized)) {
+            throw new Exception('No carriers with usable capacity are available.');
+        }
+
+        $totalCapacity = array_sum($normalized);
 
         if ($totalCapacity < $dataLength) {
             throw new Exception(
@@ -280,43 +286,19 @@ class SegmentationService
             );
         }
 
-        // Find the maximum number of segments possible where each segment can fit into
-        // at least one carrier. More segments mean smaller chunks and higher PSNR.
-        $maxPossibleSegments = 0;
-        
-        // Sort carrier capacities in descending order to prioritize larger carriers first
-        $sortedCapacities = $carrierCapacities;
-        rsort($sortedCapacities);
-        
-        $availableCapacity = 0;
-        foreach ($sortedCapacities as $capacity) {
-            // Calculate what chunk size would be if we use this many segments
-            $currentSegmentCount = $maxPossibleSegments + 1;
-            $requiredChunkSize = (int) ceil($dataLength / $currentSegmentCount);
-            
-            if ($capacity >= $requiredChunkSize) {
-                $availableCapacity += $capacity;
-                $maxPossibleSegments++;
-                
-                // Check if we have enough total capacity with this many segments
-                if ($maxPossibleSegments > 0) {
-                    $avgRequiredCapacity = $dataLength / $maxPossibleSegments;
-                    $totalUsableCapacity = array_sum(array_filter(
-                        $carrierCapacities,
-                        fn($c) => $c >= $avgRequiredCapacity
-                    ));
-                    
-                    if ($totalUsableCapacity >= $dataLength) {
-                        continue; // Continue trying to find more segments
-                    } else {
-                        // Not enough capacity for more segments, return current count
-                        return $maxPossibleSegments;
-                    }
-                }
+        rsort($normalized);
+
+        $accumulated = 0;
+        $count = 0;
+        foreach ($normalized as $capacity) {
+            $accumulated += $capacity;
+            $count++;
+
+            if ($accumulated >= $dataLength) {
+                return $count;
             }
         }
-        
-        // If all carriers are usable and can fit the data, use maximum possible segments
-        return $maxPossibleSegments > 0 ? $maxPossibleSegments : $numCarriers;
+
+        throw new Exception('Unable to determine a valid segment count for the supplied carriers.');
     }
 }

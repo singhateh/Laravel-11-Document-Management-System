@@ -3,7 +3,7 @@ import Modal from '@/Components/Modal';
 import InputLabel from '@/Components/InputLabel';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
-import axios from 'axios';
+import { DIRECT_UPLOAD_MAX_FILE_BYTES, uploadFileDirect } from '@/utils/directUpload';
 
 interface Folder {
     id: number;
@@ -19,6 +19,11 @@ interface DragDropUploadModalProps {
     onSuccess?: () => void;
 }
 
+const MAX_FILE_SIZE_BYTES = DIRECT_UPLOAD_MAX_FILE_BYTES;
+
+const getOversizedFiles = (fileList: FileList) =>
+    Array.from(fileList).filter((file) => file.size > MAX_FILE_SIZE_BYTES);
+
 export default function DragDropUploadModal({ 
     show, 
     onClose, 
@@ -32,6 +37,10 @@ export default function DragDropUploadModal({
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState('');
     const [isDragging, setIsDragging] = useState(false);
+    const [progressPercent, setProgressPercent] = useState(0);
+    const [activeFileLabel, setActiveFileLabel] = useState('');
+    const [canRetry, setCanRetry] = useState(false);
+    const [abortController, setAbortController] = useState<AbortController | null>(null);
     
     const folderList = Array.isArray(folders) ? folders : [];
 
@@ -71,55 +80,77 @@ export default function DragDropUploadModal({
 
         const droppedFiles = e.dataTransfer.files;
         if (droppedFiles && droppedFiles.length > 0) {
+            const oversizedFiles = getOversizedFiles(droppedFiles);
+            if (oversizedFiles.length > 0) {
+                setError(`Some files exceed 50 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+                return;
+            }
+
+            setError('');
             setFiles(droppedFiles);
         }
     };
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
+            const oversizedFiles = getOversizedFiles(e.target.files);
+            if (oversizedFiles.length > 0) {
+                setError(`Some files exceed 50 MB: ${oversizedFiles.map((file) => file.name).join(', ')}`);
+                setFiles(null);
+                return;
+            }
+
+            setError('');
             setFiles(e.target.files);
         }
     };
 
-    const handleSubmit: FormEventHandler = async (e) => {
-        e.preventDefault();
+    const startUpload = async () => {
         setError('');
+        setCanRetry(false);
 
         if (!files || files.length === 0) {
             setError('Please select at least one file');
             return;
         }
 
-        setUploading(true);
-
-        const formData = new FormData();
-        
-        for (let i = 0; i < files.length; i++) {
-            formData.append('files[]', files[i]);
-        }
-        
         const resolvedFolderId = folderId || (folderList.length > 0 ? folderList[0].id : '');
         if (!resolvedFolderId) {
             setError('No folder available. Please create a folder first.');
-            setUploading(false);
             return;
         }
 
-        if (resolvedFolderId) {
-            formData.append('folder_id', resolvedFolderId.toString());
-        }
-        
-        formData.append('visibility', visibility);
+        const controller = new AbortController();
+        setAbortController(controller);
+        setUploading(true);
+        setProgressPercent(0);
 
         try {
-            await axios.post('/upload', formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data',
-                },
-            });
+            const selectedFiles = Array.from(files);
+
+            for (let index = 0; index < selectedFiles.length; index++) {
+                const file = selectedFiles[index];
+                setActiveFileLabel(file.name);
+
+                await uploadFileDirect({
+                    file,
+                    folderId: Number(resolvedFolderId),
+                    visibility,
+                    signal: controller.signal,
+                    retries: 1,
+                    onProgress: (progress) => {
+                        const fileWeight = selectedFiles.length > 0 ? 100 / selectedFiles.length : 100;
+                        const base = index * fileWeight;
+                        const current = (progress.percent / 100) * fileWeight;
+                        setProgressPercent(Math.min(100, Math.round(base + current)));
+                    },
+                });
+            }
 
             setFiles(null);
             setError('');
+            setProgressPercent(100);
+            setActiveFileLabel('');
             
             if (onSuccess) {
                 onSuccess();
@@ -127,15 +158,17 @@ export default function DragDropUploadModal({
             
             onClose();
         } catch (err: any) {
-            if (err.response?.data?.errors) {
-                const errors = Object.values(err.response.data.errors).flat();
-                setError(errors.join(', '));
-            } else {
-                setError(err.response?.data?.error || err.response?.data?.message || 'Upload failed');
-            }
+            setCanRetry(true);
+            setError(err?.response?.data?.message || err?.message || 'Upload failed');
         } finally {
             setUploading(false);
+            setAbortController(null);
         }
+    };
+
+    const handleSubmit: FormEventHandler = async (e) => {
+        e.preventDefault();
+        await startUpload();
     };
 
     return (
@@ -195,7 +228,7 @@ export default function DragDropUploadModal({
                         <p className="mt-1 text-sm text-gray-600">or drag and drop</p>
                     </div>
                     <p className="mt-2 text-xs text-gray-500">
-                        Any file type, any size
+                        Supported types: PDF, DOC, DOCX, TXT. Max 50 MB per file.
                     </p>
                 </div>
 
@@ -214,6 +247,21 @@ export default function DragDropUploadModal({
                                 </li>
                             ))}
                         </ul>
+                    </div>
+                )}
+
+                {uploading && (
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                        <p className="text-sm text-blue-700">
+                            Uploading {activeFileLabel !== '' ? activeFileLabel : 'file'}...
+                        </p>
+                        <div className="mt-2 h-2 w-full bg-blue-100 rounded overflow-hidden">
+                            <div
+                                className="h-2 bg-blue-500 transition-all"
+                                style={{ width: `${progressPercent}%` }}
+                            />
+                        </div>
+                        <p className="mt-1 text-xs text-blue-700">{progressPercent}%</p>
                     </div>
                 )}
 
@@ -247,9 +295,23 @@ export default function DragDropUploadModal({
                 </div>
 
                 <div className="mt-6 flex justify-end gap-3">
-                    <SecondaryButton onClick={onClose} disabled={uploading}>
-                        Cancel
+                    <SecondaryButton
+                        onClick={() => {
+                            if (uploading && abortController) {
+                                abortController.abort();
+                            } else {
+                                onClose();
+                            }
+                        }}
+                        disabled={false}
+                    >
+                        {uploading ? 'Cancel Upload' : 'Cancel'}
                     </SecondaryButton>
+                    {canRetry && !uploading && (
+                        <SecondaryButton onClick={startUpload}>
+                            Retry
+                        </SecondaryButton>
+                    )}
                     <PrimaryButton disabled={uploading || !files || files.length === 0}>
                         {uploading ? 'Uploading...' : 'Upload'}
                     </PrimaryButton>

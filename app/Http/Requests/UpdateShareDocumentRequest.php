@@ -25,11 +25,6 @@ class UpdateShareDocumentRequest extends FormRequest
             'permission_level' => ['required', 'in:viewer,commenter,editor,co_owner,owner'],
             'valid_until' => ['nullable', 'date', 'after:now'],
             'visibility' => ['nullable', 'in:public,private'],
-            'can_download' => ['nullable', 'boolean'],
-            'can_upload' => ['nullable', 'boolean'],
-            'can_edit' => ['nullable', 'boolean'],
-            'can_comment' => ['nullable', 'boolean'],
-            'can_share' => ['nullable', 'boolean'],
         ];
     }
 }

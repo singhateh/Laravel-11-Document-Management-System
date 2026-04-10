@@ -61,7 +61,7 @@ class DocumentController extends Controller
 
         $folders = generateSidebarMenu();
         $owners = User::get(['id', 'name', 'email']);
-        $rightFolders = Folder::get(['id', 'name']);
+        $rightFolders = Folder::orderBy('name', 'asc')->get(['id', 'name']);
 
         return Inertia::render('Documents/Index', [
             'documents' => $documents,
@@ -175,13 +175,27 @@ class DocumentController extends Controller
 
     public function uploadDocumentFiles(StoreDocumentRequest $request)
     {
+        Log::info('Upload request received:', [
+            'has_files' => $request->hasFile('files'),
+            'has_files_array' => $request->hasFile('files[]'),
+            'files' => $request->file('files'),
+            'files_array' => $request->file('files[]'),
+            'all' => $request->all(),
+        ]);
+        
         try {
+            // Handle both single file and array formats
+            if (!$request->hasFile('files') && $request->hasFile('files[]')) {
+                $request->merge(['files' => $request->file('files[]')]);
+            }
+            
             $folderId = $this->documentService->setUploadDocumentFiles($request);
 
             AccessLog::log('upload', 'document', $folderId, $request);
 
             return response()->json(['message' => 'Files uploaded successfully', 'url' => route('getFiles', $folderId)], 200);
         } catch (\InvalidArgumentException $e) {
+            Log::error('Validation error: ' . $e->getMessage());
             return response()->json(['error' => $e->getMessage()], 422);
         } catch (\Exception $e) {
             Log::error('Upload error: ' . $e->getMessage(), ['exception' => $e]);
@@ -330,7 +344,7 @@ class DocumentController extends Controller
 
         $document->update(array_merge($validated, [
             'last_updated_at' => now(),
-            'last_updated_by' => $user->name,
+            'last_updated_by_user_id' => $user->id,
         ]));
 
         // Notify watchers about the update

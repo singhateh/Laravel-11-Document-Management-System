@@ -17,9 +17,9 @@ class Folder extends Model
     {
         parent::boot();
 
-        // Define a global scope to always order by position
-        static::addGlobalScope('position', function ($builder) {
-            $builder->orderBy('position');
+        // Folders will be ordered alphabetically by name by default
+        static::addGlobalScope('name', function ($builder) {
+            $builder->orderBy('name', 'asc');
         });
 
         static::creating(function ($folder) {
@@ -27,9 +27,9 @@ class Folder extends Model
                 $folder->position = static::max('position') + 1;
             }
             
-            // Set private visibility by default
+            // Keep model default aligned with migration default.
             if (!isset($folder->visibility)) {
-                $folder->visibility = 'private';
+                $folder->visibility = 'public';
             }
         });
     }

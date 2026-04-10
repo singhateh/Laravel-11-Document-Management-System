@@ -171,6 +171,10 @@ Table folders {
   created_at timestamp
   updated_at timestamp
   deleted_at timestamp
+
+  indexes {
+    (parent_id) [name: 'folders_parent_id_index']
+  }
 }
 
 Table documents {
@@ -200,8 +204,9 @@ Table documents {
   owner_id bigint [ref: > users.id]
   // RENAMED from 'date' (ambiguous, reserved word in SQL) → document_date.
   document_date timestamp
-  // RENAMED from 'emojies' (typo). For multiple emojis a pivot table is the
-  // normalized approach; this remains varchar pending a pivot migration.
+  // NOTE: 'emojis' varchar column is still present in the base schema (migration 2026_04_07_000002).
+  //       The 1NF-fix migration (2026_04_06_000001) drops it and migrates data to emojiables.
+  //       For fresh installs using consolidated migrations, this column exists until explicitly dropped.
   emojis varchar
   // ---- At-rest encryption metadata (AES-256-GCM) ----
   // NOTE: Structurally similar to stego_documents encryption fields but intentionally
@@ -212,9 +217,18 @@ Table documents {
   enc_dek_salt varchar(32)    // PBKDF2 salt for DEK derivation: 16 bytes → 32 hex chars
   enc_dek_iterations int      // PBKDF2 iteration count (stored to survive future changes)
   enc_hash_sha256 varchar(64) // SHA-256 of plaintext; verified after decryption
+  // Document watcher tracking fields (added by migration 2026_04_07_000008)
+  last_updated_at timestamp
+  // FIX: 3NF transitive dependency — replaced text column with FK to users.
+  last_updated_by_user_id bigint [ref: > users.id]
   created_at timestamp
   updated_at timestamp
   deleted_at timestamp
+
+  indexes {
+    (folder_id, owner_id) [name: 'documents_folder_id_owner_id_index']
+    (owner_id) [name: 'documents_owner_id_index']
+  }
 }
 
 Table comments {
@@ -258,6 +272,9 @@ Table tags {
 
 // ---- Pivot Tables ----
 
+// NOTE: folder_tag and document_tag tables have been dropped and merged into
+// taggables (polymorphic M:M). See taggables table below.
+
 // MERGED: folder_tag + document_tag → taggables (polymorphic M:M)
 // Both tables were structurally identical, differing only in the left-side FK.
 // taggables follows Laravel's morphToMany pattern and makes the tag system
@@ -300,6 +317,39 @@ Table category_folder {
 }
 
 // ============================================================
+// EMOJI TABLES (1NF fix — replaces documents.emojis varchar)
+// ============================================================
+
+// Lookup table for distinct emoji characters.
+// Each row represents one unique emoji with its Unicode codepoint.
+Table emojis {
+  id bigint [pk, increment]
+  codepoint varchar(16) [unique, not null]  // e.g. "1F4C4" for 📄
+  emoji varchar(8) [unique, not null]       // e.g. "📄"
+  description varchar                       // e.g. "document"
+  created_at timestamp
+  updated_at timestamp
+}
+
+// Polymorphic pivot — follows the same pattern as taggables.
+// Allows any model (documents, folders, etc.) to have multiple emojis attached.
+// Trade-off: emojiable_id has no DB-level FK constraint (polymorphic limitation);
+// referential integrity is enforced by Eloquent and the hard FK on emoji_id.
+Table emojiables {
+  id bigint [pk, increment]
+  emoji_id bigint [not null, ref: > emojis.id]
+  emojiable_id bigint [not null]    // was: document_id, folder_id, etc.
+  emojiable_type varchar [not null] // 'App\Models\Document', etc.
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (emoji_id, emojiable_id, emojiable_type) [unique]
+    (emojiable_id, emojiable_type)
+  }
+}
+
+// ============================================================
 // NOTIFICATIONS & SHARING TABLES
 // ============================================================
 
@@ -311,7 +361,7 @@ Table notifications {
   notifiable_type varchar
   activity_type varchar [not null]
   model_type varchar [not null]
-  model_id varchar [not null]
+  model_id varchar
   message longtext
   status "enum('UNREAD','READ')" [default: 'UNREAD']
   dismiss_status "enum('UNDISMISSED','DISMISSED')" [default: 'UNDISMISSED']
@@ -341,11 +391,10 @@ Table share_documents {
   valid_until date
   visibility "enum('public','private')" [default: 'public']
   // FIX: Changed from enum('yes','no') to boolean — consistent with documents.is_encrypted.
-  can_download boolean [default: true]
-  can_upload boolean [default: false]
-  can_edit boolean [default: false]
-  can_comment boolean [default: false]
-  can_share boolean [default: false]
+  // NOTE: The five boolean columns (can_download, can_upload, can_edit, can_comment,
+  //       can_share) were dropped in migration 2026_04_06_000002.
+  //       permission_level is now the single source of truth; booleans are computed
+  //       at runtime via the ShareDocument model's accessors.
   permission_level varchar [default: 'viewer']
   user_type varchar [not null]
   user_id bigint [not null]
@@ -384,12 +433,15 @@ Table stego_carriers {
   mime_type varchar
   size bigint [not null]
   s3_key varchar
-  // FIX: s3_url dropped — transitive dependency on s3_key (3NF violation).
-  //      Derive via Storage::disk('s3')->url($s3_key) in the application layer.
-  //      A computed Eloquent accessor on StegoCarrier preserves call-site compatibility.
   // PSNR in dB measured after LSB embedding (images only; null for audio/text carriers).
   // Architecture requires PSNR >= 40 dB for image carriers.
   psnr float
+  // Carrier pool management columns (migration 2026_03_23_000001)
+  validation_status "enum('pending','valid','invalid')" [default: 'pending']
+  validation_error varchar
+  capacity_bytes bigint
+  is_in_use boolean [default: false]
+  validated_at timestamp
   uploaded_by bigint [ref: > users.id]
   created_at timestamp
   updated_at timestamp
@@ -397,6 +449,7 @@ Table stego_carriers {
   indexes {
     (file_type)
     (uploaded_by)
+    (uploaded_by, validation_status, is_in_use)
   }
 }
 
@@ -420,9 +473,13 @@ Table stego_documents {
   stego_hash_sha256 varchar(64) // SHA-256 of original plaintext (nullable for pending status)
   stego_dek_salt varchar(64)    // hex-encoded DEK derivation salt
   stego_dek_iter int [default: 10000]      // PBKDF2 iteration count
+  compressed boolean [default: true]        // Whether the ciphertext was compressed before encryption
   s3_key varchar
-  // FIX: s3_url dropped — transitive dependency on s3_key (3NF violation).
-  //      Derive via Storage::disk('s3')->url($s3_key) in the application layer.
+  // Decoding operation fields
+  decoding_status varchar [default: 'idle'] // idle, pending, in_progress, completed, failed
+  decoding_error text
+  download_path varchar
+  decoding_duration decimal(10,3) // Total decoding duration in seconds (with milliseconds precision)
   created_at timestamp
   updated_at timestamp
 
@@ -439,7 +496,7 @@ Table stego_segments {
   stego_carrier_id bigint [not null, ref: > stego_carriers.id]
   // WIDENED from tinyint (max 255) to smallint (max 65 535) to handle large document splits.
   segment_index smallint [not null]
-  encrypted_chunk text [not null]
+  encrypted_chunk text  // base64-encoded encrypted bytes (nullable for pending segments)
   s3_key varchar
   chunk_hash varchar [not null]
   created_at timestamp
@@ -463,5 +520,21 @@ Table stego_document_grants {
     (stego_document_id, viewer_user_id) [unique]
     (viewer_user_id) [name: 'stego_grants_viewer_index']
     (granted_by) [name: 'stego_grants_grantor_index']
+  }
+}
+
+// ============================================================
+// DOCUMENT WATCHERS TABLE
+// ============================================================
+
+Table document_watchers {
+  id bigint [pk, increment]
+  user_id bigint [not null, ref: > users.id]
+  document_id bigint [not null, ref: > documents.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (user_id, document_id) [unique]
   }
 }

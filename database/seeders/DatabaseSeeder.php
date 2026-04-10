@@ -18,5 +18,8 @@ class DatabaseSeeder extends Seeder
         
         // Seed user accounts with different roles
         $this->call(UserSeeder::class);
+        
+        // Seed system default carriers for new users
+        $this->call(SystemCarrierSeeder::class);
     }
 }

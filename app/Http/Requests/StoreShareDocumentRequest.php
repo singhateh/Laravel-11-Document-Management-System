@@ -29,11 +29,6 @@ class StoreShareDocumentRequest extends FormRequest
             'valid_until' => ['nullable', 'date', 'after:now'],
             'visibility' => ['nullable', 'in:public,private'],
             'permission_level' => ['nullable', 'in:viewer,commenter,editor,co_owner,owner'],
-            'can_download' => ['nullable', 'boolean'],
-            'can_upload' => ['nullable', 'boolean'],
-            'can_edit' => ['nullable', 'boolean'],
-            'can_comment' => ['nullable', 'boolean'],
-            'can_share' => ['nullable', 'boolean'],
         ];
     }
 }

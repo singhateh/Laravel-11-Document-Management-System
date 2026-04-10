@@ -44,7 +44,7 @@ class Notification extends Model
                 $user = Auth::user();
                 $cacheKey = 'dashboard_data_' . $user?->id;
                 Cache::forget($cacheKey);
-                Cache::forget('notifications');
+                Cache::forget('notifications_' . $user?->id);
             }
         });
 
@@ -53,7 +53,7 @@ class Notification extends Model
                 $user = Auth::user();
                 $cacheKey = 'dashboard_data_' . $user?->id;
                 Cache::forget($cacheKey);
-                Cache::forget('notifications');
+                Cache::forget('notifications_' . $user?->id);
             }
         });
 
@@ -61,7 +61,7 @@ class Notification extends Model
             $user = Auth::user();
             $cacheKey = 'dashboard_data_' . $user?->id;
             Cache::forget($cacheKey);
-            Cache::forget('notifications');
+            Cache::forget('notifications_' . $user?->id);
         });
     }
 

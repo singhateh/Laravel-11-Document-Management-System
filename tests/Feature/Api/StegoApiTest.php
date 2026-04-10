@@ -370,5 +370,107 @@ class StegoApiTest extends TestCase
                 'stego_document_id',
             ]);
     }
+
+    // -------------------------------------------------------------------------
+    // Estimate decoding time
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function estimate_decoding_time_requires_authentication(): void
+    {
+        $this->getJson('/api/stego/documents/1/estimate-decoding-time')->assertStatus(401);
+    }
+
+    #[Test]
+    public function estimate_decoding_time_returns_200_for_owner(): void
+    {
+        $stegoDoc = StegoDocument::factory()
+            ->has(\App\Models\Document::factory()->state(['owner_id' => $this->user->id]), 'document')
+            ->create(['user_id' => $this->user->id]);
+
+        $mock = Mockery::mock(StegoDocumentService::class);
+        $mock->shouldReceive('estimateDecodingTime')
+            ->once()
+            ->with($stegoDoc->id)
+            ->andReturn(120.5);
+
+        $this->app->instance(StegoDocumentService::class, $mock);
+
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->getJson("/api/stego/documents/{$stegoDoc->id}/estimate-decoding-time");
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['estimated_decoding_time'])
+            ->assertJson(['estimated_decoding_time' => 120.5]);
+    }
+
+    #[Test]
+    public function estimate_decoding_time_returns_200_for_granted_viewer(): void
+    {
+        $otherUser = User::factory()->create(['username' => 'viewer', 'role' => 'user']);
+        
+        $stegoDoc = StegoDocument::factory()
+            ->has(\App\Models\Document::factory()->state(['owner_id' => $this->user->id]), 'document')
+            ->create(['user_id' => $this->user->id]);
+            
+        \App\Models\StegoDocumentGrant::factory()->create([
+            'stego_document_id' => $stegoDoc->id,
+            'viewer_user_id' => $otherUser->id,
+            'granted_by' => $this->user->id,
+        ]);
+
+        $mock = Mockery::mock(StegoDocumentService::class);
+        $mock->shouldReceive('estimateDecodingTime')
+            ->once()
+            ->with($stegoDoc->id)
+            ->andReturn(60.25);
+
+        $this->app->instance(StegoDocumentService::class, $mock);
+
+        $response = $this->actingAs($otherUser, 'sanctum')
+            ->getJson("/api/stego/documents/{$stegoDoc->id}/estimate-decoding-time");
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['estimated_decoding_time'])
+            ->assertJson(['estimated_decoding_time' => 60.25]);
+    }
+
+    #[Test]
+    public function estimate_decoding_time_returns_404_for_unauthorized_user(): void
+    {
+        $otherUser = User::factory()->create(['username' => 'unauthorized', 'role' => 'user']);
+        
+        $stegoDoc = StegoDocument::factory()
+            ->has(\App\Models\Document::factory()->state(['owner_id' => $this->user->id]), 'document')
+            ->create(['user_id' => $this->user->id]);
+
+        $response = $this->actingAs($otherUser, 'sanctum')
+            ->getJson("/api/stego/documents/{$stegoDoc->id}/estimate-decoding-time");
+
+        $response->assertStatus(404);
+    }
+
+    #[Test]
+    public function estimate_decoding_time_handles_no_estimated_time(): void
+    {
+        $stegoDoc = StegoDocument::factory()
+            ->has(\App\Models\Document::factory()->state(['owner_id' => $this->user->id]), 'document')
+            ->create(['user_id' => $this->user->id]);
+
+        $mock = Mockery::mock(StegoDocumentService::class);
+        $mock->shouldReceive('estimateDecodingTime')
+            ->once()
+            ->with($stegoDoc->id)
+            ->andReturnNull();
+
+        $this->app->instance(StegoDocumentService::class, $mock);
+
+        $response = $this->actingAs($this->user, 'sanctum')
+            ->getJson("/api/stego/documents/{$stegoDoc->id}/estimate-decoding-time");
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['estimated_decoding_time'])
+            ->assertJson(['estimated_decoding_time' => null]);
+    }
 }
 

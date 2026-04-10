@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Concerns\HasStegoEncoding;
+use App\Jobs\EncodeStegoDocumentJob;
 use App\Models\Document;
 use App\Models\StegoDocument;
 use App\Services\Stego\StegoDocumentService;
@@ -32,10 +33,12 @@ class StegoWebController extends Controller
                 'document_id',
                 'user_id',
                 'status',
+                'failed_reason',
                 'decoding_status',
                 'download_path',
                 'created_at',
                 'updated_at',
+                'stego_hash_sha256',
             ])
             ->with(['document:id,name,extension,size'])
             ->withCount('segments')
@@ -55,17 +58,25 @@ class StegoWebController extends Controller
             ->latest()
             ->get();
 
+        // Get system carriers for fallback option
+        $systemCarriers = \App\Models\StegoCarrier::where('uploaded_by', \App\Models\User::where('role', 'admin')->first()->id ?? 0)
+            ->where('validation_status', 'valid')
+            ->where('is_in_use', false)
+            ->select(['id', 'name', 'capacity_bytes', 'file_path'])
+            ->get();
+
         return Inertia::render('Stego/Encode', [
             'documents' => $documents,
+            'systemCarriers' => $systemCarriers,
         ]);
     }
 
     public function encode(Request $request)
     {
+        $useSystemCarriers = $request->boolean('use_system_carriers');
+
         $request->validate([
             'document_id'  => ['required', 'integer', 'exists:documents,id'],
-            'carriers'     => ['required', 'array', 'min:1'],
-            'carriers.*'   => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
         ]);
 
         // Master Key is derived at login and kept server-side only.
@@ -88,25 +99,29 @@ class StegoWebController extends Controller
             return back()->withErrors(['document_id' => $e->getMessage()]);
         }
 
-        $carrierPaths = $this->storeCarriersTmp($request->file('carriers'));
+        // Pre-create pending record so users can immediately see queued state in index.
+        $pending = StegoDocument::create([
+            'document_id' => $document->id,
+            'user_id'     => $user->id,
+            'status'      => 'pending',
+        ]);
 
-        try {
-            $result   = $this->stegoService->encode(
-                $user->id,
-                $plaintext,
-                $masterKey,
-                $carrierPaths,
-                $document->id
-            );
-            $usedCarrierCount = count($result['quality_metrics'] ?? []);
+        // Manual carrier uploads are disabled for web encode.
+        // Encoding now always uses carrier pool + optional system fallback.
+        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, []);
 
-            return redirect()->route('stego.index')
-                ->with('success', "Document encoded and hidden in {$usedCarrierCount} carrier(s).");
-        } catch (\Exception $e) {
-            return back()->withErrors(['encode' => 'Encoding failed: ' . $e->getMessage()]);
-        } finally {
-            $this->releaseCarriers($carrierPaths);
-        }
+        EncodeStegoDocumentJob::dispatchAfterResponse(
+            $user->id,
+            $plainPath,
+            $masterKey,
+            $carrierPaths,
+            $document->id,
+            $pending->id,
+            $useSystemCarriers,
+        );
+
+        return redirect()->route('stego.index')
+            ->with('success', 'Encoding queued. Your document will appear once processing completes.');
     }
 
     // ── Decode ────────────────────────────────────────────────────────────────
@@ -116,10 +131,12 @@ class StegoWebController extends Controller
         $user = Auth::user();
 
         $stegoDocs = StegoDocument::where('user_id', $user->id)
+            ->where('status', 'ready')
             ->select([
                 'id',
                 'document_id',
                 'user_id',
+                'status',
                 'decoding_status',
                 'decoding_error',
                 'download_path',
@@ -136,6 +153,7 @@ class StegoWebController extends Controller
                     'name'      => $s->document->name,
                     'extension' => $s->document->extension,
                 ] : null,
+                'status'         => $s->status,
                 'segments_count' => $s->segments_count,
                 'decoding_status' => $s->decoding_status,
                 'decoding_error'  => $s->decoding_error,
@@ -165,9 +183,19 @@ class StegoWebController extends Controller
         // Verify ownership
         $stegoDoc = StegoDocument::where('user_id', $user->id)
             ->where('id', $request->stego_document_id)
-            ->select(['id', 'document_id', 'user_id'])
+            ->select(['id', 'document_id', 'user_id', 'status', 'failed_reason'])
             ->with('document')
             ->firstOrFail();
+
+        if ($stegoDoc->status !== 'ready') {
+            $details = $stegoDoc->status === 'failed' && !empty($stegoDoc->failed_reason)
+                ? ' Reason: ' . $stegoDoc->failed_reason
+                : '';
+
+            return back()->withErrors([
+                'decode' => "This stego document is not ready for decoding (status: {$stegoDoc->status}).{$details}",
+            ]);
+        }
 
         // Keep web decode state aligned with API decode workflow.
         $stegoDoc->update([
@@ -229,6 +257,44 @@ class StegoWebController extends Controller
 
         return Inertia::render('Stego/Tokens', [
             'tokens' => $tokens,
+        ]);
+    }
+
+    // ── Carrier Pool management (Inertia page) ───────────────────────────────
+
+    public function carrierPool()
+    {
+        $user = Auth::user();
+
+        $carriers = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->select([
+                'id', 'name', 'file_type', 'mime_type', 'size',
+                'psnr', 'capacity_bytes', 'validation_status',
+                'validation_error', 'is_in_use', 'validated_at', 'created_at',
+            ])
+            ->latest()
+            ->paginate(20);
+
+        // Calculate pool statistics
+        $totalCarriers = \App\Models\StegoCarrier::where('uploaded_by', $user->id)->count();
+        $validCarriers = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->where('validation_status', 'valid')
+            ->count();
+        $totalCapacity = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->where('validation_status', 'valid')
+            ->sum('capacity_bytes');
+        $inUseCount = \App\Models\StegoCarrier::where('uploaded_by', $user->id)
+            ->where('is_in_use', true)
+            ->count();
+
+        return Inertia::render('Stego/CarrierPool', [
+            'carriers' => $carriers,
+            'stats' => [
+                'total' => $totalCarriers,
+                'valid' => $validCarriers,
+                'totalCapacity' => $totalCapacity,
+                'inUse' => $inUseCount,
+            ],
         ]);
     }
 }

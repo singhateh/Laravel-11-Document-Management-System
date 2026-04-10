@@ -3,8 +3,10 @@
 namespace App\Services\Stego;
 
 use Exception;
+use DateTimeInterface;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Filesystem\FilesystemAdapter;
 
 /**
  * CloudStorageService
@@ -21,7 +23,14 @@ class CloudStorageService
     //   stego/segments/{stegoDocumentId}/{segmentIndex}
     // ------------------------------------------------------------------
 
-    private const DISK = 'local';
+    private FilesystemAdapter $disk;
+    private string $diskName;
+
+    public function __construct()
+    {
+        $this->diskName = (string) config('stegolock.storage.disk', 'local');
+        $this->disk = Storage::disk($this->diskName);
+    }
 
     // -------------------------------------------------------------------------
     // Upload
@@ -44,7 +53,7 @@ class CloudStorageService
 
         $stream = fopen($localPath, 'r');
 
-        $ok = Storage::disk(self::DISK)->put($s3Key, $stream);
+        $ok = $this->disk->put($s3Key, $stream);
 
         if (is_resource($stream)) {
             fclose($stream);
@@ -71,7 +80,7 @@ class CloudStorageService
      */
     public function uploadContent(string $content, string $s3Key, string $visibility = 'private'): array
     {
-        $ok = Storage::disk(self::DISK)->put($s3Key, $content);
+        $ok = $this->disk->put($s3Key, $content);
 
         if (!$ok) {
             throw new Exception("Local storage content write failed for key: {$s3Key}");
@@ -98,7 +107,7 @@ class CloudStorageService
     {
         $this->assertKeyExists($s3Key);
 
-        $contents = Storage::disk(self::DISK)->get($s3Key);
+        $contents = $this->disk->get($s3Key);
 
         if ($contents === null) {
             throw new Exception("S3 download returned null for key: {$s3Key}");
@@ -122,7 +131,7 @@ class CloudStorageService
     {
         $this->assertKeyExists($s3Key);
 
-        $contents = Storage::disk(self::DISK)->get($s3Key);
+        $contents = $this->disk->get($s3Key);
 
         if ($contents === null) {
             throw new Exception("S3 object is empty or unreadable: {$s3Key}");
@@ -143,11 +152,11 @@ class CloudStorageService
      */
     public function delete(string $s3Key): void
     {
-        if (!Storage::disk(self::DISK)->exists($s3Key)) {
+        if (!$this->disk->exists($s3Key)) {
             return; // idempotent — nothing to delete
         }
 
-        $ok = Storage::disk(self::DISK)->delete($s3Key);
+        $ok = $this->disk->delete($s3Key);
 
         if (!$ok) {
             throw new Exception("S3 delete failed for key: {$s3Key}");
@@ -161,10 +170,10 @@ class CloudStorageService
      */
     public function deleteMany(array $s3Keys): void
     {
-        $existing = array_filter($s3Keys, fn ($k) => Storage::disk(self::DISK)->exists($k));
+        $existing = array_filter($s3Keys, fn ($k) => $this->disk->exists($k));
 
         if (!empty($existing)) {
-            Storage::disk(self::DISK)->delete(array_values($existing));
+            $this->disk->delete(array_values($existing));
         }
     }
 
@@ -181,16 +190,20 @@ class CloudStorageService
      */
     public function url(string $s3Key): string
     {
-        return Storage::disk(self::DISK)->path($s3Key);
+        return $this->disk->url($s3Key);
     }
 
     /**
      * Temporary URLs are not applicable to local storage — returns the same
      * absolute local path as url().
      */
-    public function temporaryUrl(string $s3Key, \DateTimeInterface $expiry): string
+    public function temporaryUrl(string $s3Key, DateTimeInterface $expiry): string
     {
-        return $this->url($s3Key);
+        if ($this->diskName === 'local') {
+            return $this->url($s3Key);
+        }
+
+        return $this->disk->temporaryUrl($s3Key, $expiry);
     }
 
     /**
@@ -201,7 +214,7 @@ class CloudStorageService
      */
     public function exists(string $s3Key): bool
     {
-        return Storage::disk(self::DISK)->exists($s3Key);
+        return $this->disk->exists($s3Key);
     }
 
     // -------------------------------------------------------------------------
@@ -229,7 +242,7 @@ class CloudStorageService
 
     private function assertKeyExists(string $s3Key): void
     {
-        if (!Storage::disk(self::DISK)->exists($s3Key)) {
+        if (!$this->disk->exists($s3Key)) {
             throw new Exception("Local storage file not found: {$s3Key}");
         }
     }

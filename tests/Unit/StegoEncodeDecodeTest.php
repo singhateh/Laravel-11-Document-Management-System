@@ -370,6 +370,46 @@ class StegoEncodeDecodeTest extends TestCase
         $this->assertSame($plaintext, $recovered);
     }
 
+    #[Test]
+    public function bin_packing_can_use_fewer_segments_than_available_carriers(): void
+    {
+        $plaintext = random_bytes(9000);
+
+        $carrier1 = $this->makeCarrier('bp_carrier_1');
+        $carrier2 = $this->makeCarrier('bp_carrier_2');
+        $carrier3 = $this->makeCarrier('bp_carrier_3');
+
+        $mkd       = $this->crypto->deriveMasterKey('BinPack1!');
+        $dek       = $this->crypto->deriveDEK($mkd['masterKey'], 'bp-doc');
+        $encrypted = $this->crypto->encrypt($plaintext, $dek['dek']);
+
+        $carriers   = [$carrier1, $carrier2, $carrier3];
+        $capacities = [7000, 4000, 4000];
+        $segments   = $this->seg->split($encrypted['ciphertext'], $capacities);
+
+        $this->assertCount(2, $segments);
+
+        $stegoPaths = [];
+        foreach ($segments as $seg) {
+            $idx        = $seg['index'];
+            $output     = $this->tmpDir . DIRECTORY_SEPARATOR . "bp_stego_{$idx}.png";
+            $this->stego->embed($carriers[$idx], $seg['chunk'], $output);
+            $stegoPaths[$idx] = ['path' => $output, 'hash' => $seg['hash']];
+        }
+
+        $reassemblySegments = [];
+        foreach ($stegoPaths as $index => $info) {
+            $chunk                = $this->stego->extract($info['path']);
+            $reassemblySegments[] = ['index' => $index, 'chunk' => $chunk, 'hash' => $info['hash']];
+        }
+
+        $rawCiphertext = $this->seg->reassemble($reassemblySegments, verifyHashes: true);
+        $reDek         = $this->crypto->deriveDEK($mkd['masterKey'], 'bp-doc', $dek['salt'], $dek['iterations']);
+        $recovered     = $this->crypto->decrypt($rawCiphertext, $reDek['dek'], $encrypted['iv'], $encrypted['auth_tag']);
+
+        $this->assertSame($plaintext, $recovered);
+    }
+
     // =========================================================================
     // Tamper / error detection
     // =========================================================================

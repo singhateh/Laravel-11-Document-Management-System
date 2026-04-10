@@ -22,6 +22,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Storage Disk
+    |--------------------------------------------------------------------------
+    |
+    | Controls where stego artifacts are stored. Set to 'b2' to use Backblaze,
+    | or 'local' for local development.
+    |
+    */
+
+    'storage' => [
+        'disk' => env('STEGOLOCK_STORAGE_DISK', 'local'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Python Executable
     |--------------------------------------------------------------------------
     |
@@ -95,6 +109,34 @@ return [
     |
     */
 
-    'max_carrier_size_mb' => (int) env('STEGOLOCK_MAX_CARRIER_MB', 20),
+    'max_carrier_size_mb' => (int) env('STEGOLOCK_MAX_CARRIER_MB', 100),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Carrier Pool Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Settings for the carrier pool feature that allows users to upload and
+    | validate carrier images once, then reuse them across multiple encode
+    | operations without re-uploading.
+    |
+    */
+
+    'carrier_pool' => [
+        // Maximum number of carriers a user can have in their pool
+        'max_carriers_per_user' => (int) env('STEGOLOCK_MAX_CARRIERS_PER_USER', 50),
+
+        // Maximum total size of all carriers in a user's pool (in bytes)
+        // Default: 500 MB
+        'max_total_size_bytes' => (int) env('STEGOLOCK_MAX_POOL_SIZE_BYTES', 500 * 1024 * 1024),
+
+        // PSNR threshold for carrier validation (in dB)
+        // Carriers below this threshold are marked as invalid
+        'psnr_threshold' => (float) env('STEGOLOCK_PSNR_THRESHOLD', 40.0),
+
+        // Additional encode-time quality guard for bin-packing concentration.
+        // If average PSNR across used image carriers drops below this value, encode fails.
+        'encode_average_psnr_threshold' => (float) env('STEGOLOCK_ENCODE_AVG_PSNR_THRESHOLD', 41.0),
+    ],
 
 ];

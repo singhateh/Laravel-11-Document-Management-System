@@ -7,9 +7,11 @@ use App\Http\Concerns\HasStegoEncoding;
 use App\Jobs\EncodeStegoDocumentJob;
 use App\Jobs\DecodeStegoDocumentJob;
 use App\Models\Document;
+use App\Models\StegoCarrier;
 use App\Models\StegoDocument;
 use App\Models\StegoDocumentGrant;
 use App\Models\User;
+use App\Services\Stego\CloudStorageService;
 use App\Services\Stego\StegoDocumentService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -41,6 +43,8 @@ class StegoDocumentController extends Controller
 
     public function __construct(private readonly StegoDocumentService $stegoService) {}
 
+    private ?CloudStorageService $cloudStorage = null;
+
     // -------------------------------------------------------------------------
     // GET /api/stego/documents  +  GET /api/stego  (SPA alias)
     // -------------------------------------------------------------------------
@@ -53,22 +57,34 @@ class StegoDocumentController extends Controller
      *
      * @return JsonResponse
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $allowedStatuses = ['pending', 'ready', 'failed'];
+        $statusFilter = $request->query('status');
+
+        if ($statusFilter !== null && !in_array($statusFilter, $allowedStatuses, true)) {
+            return response()->json([
+                'message' => 'Invalid status filter. Allowed values: pending, ready, failed.',
+            ], 422);
+        }
+
         $docs = Cache::remember(
-            'stego.index.u' . Auth::id(),
+            'stego.index.u' . Auth::id() . '.status.' . ($statusFilter ?? 'all'),
             30,
             fn () => Auth::user()
                 ->stegoDocuments()
+                ->when($statusFilter !== null, fn ($q) => $q->where('status', $statusFilter))
                 ->select([
                     'id',
                     'document_id',
                     'user_id',
                     'status',
+                    'failed_reason',
                     'decoding_status',
                     'download_path',
                     'created_at',
                     'updated_at',
+                    'stego_hash_sha256',
                 ])
                 ->with(['document:id,name,extension'])
                 ->withCount('segments')
@@ -201,10 +217,12 @@ class StegoDocumentController extends Controller
             ], 401);
         }
 
+        $useSystemCarriers = $request->boolean('use_system_carriers');
+
         $request->validate([
             'document_id' => ['required', 'integer', 'exists:documents,id'],
-            'carriers'    => ['required', 'array', 'min:1'],
-            'carriers.*'  => ['required', 'file', 'mimes:png,bmp,jpeg,jpg', 'max:20480'],
+            'carriers'    => ['nullable', 'array'],
+            'carriers.*'  => ['file', 'mimes:png,bmp,jpeg,jpg', 'max:51200'],
         ]);
 
         $user     = Auth::user();
@@ -225,7 +243,14 @@ class StegoDocumentController extends Controller
 
         // Stage plaintext + carriers to persistent storage so the queue
         // worker can read them after the HTTP request has ended.
-        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $request->file('carriers'));
+        $carrierFiles = $request->file('carriers', []);
+        if (!is_array($carrierFiles)) {
+            $carrierFiles = [$carrierFiles];
+        }
+
+        // Always stage plaintext so the queue worker can read it.
+        // Carrier files may be empty when using pool/system fallback only.
+        [$plainPath, $carrierPaths] = $this->stageForQueue($plaintext, $carrierFiles);
 
         EncodeStegoDocumentJob::dispatch(
             $user->id,
@@ -234,6 +259,7 @@ class StegoDocumentController extends Controller
             $carrierPaths,
             $document->id,
             $pending->id,
+            $useSystemCarriers,
         );
 
         return response()->json([
@@ -281,9 +307,19 @@ class StegoDocumentController extends Controller
                   );
             })
             ->where('id', $request->stego_document_id)
-            ->select(['id', 'document_id', 'user_id'])
+            ->select(['id', 'document_id', 'user_id', 'status', 'failed_reason'])
             ->with('document')
             ->firstOrFail();
+
+        if ($stegoDoc->status !== 'ready') {
+            $details = $stegoDoc->status === 'failed' && !empty($stegoDoc->failed_reason)
+                ? ' Reason: ' . $stegoDoc->failed_reason
+                : '';
+
+            return response()->json([
+                'message' => "This stego document is not ready for decoding (status: {$stegoDoc->status}).{$details}",
+            ], 422);
+        }
 
         // Update stego document status to indicate decoding is pending
         $stegoDoc->update([
@@ -486,6 +522,197 @@ class StegoDocumentController extends Controller
      * @param  int     $viewerUserId   User id whose grant should be removed
      * @return JsonResponse            200 | 403 | 404
      */
+    /**
+     * Preflight check for encoding a document.
+     *
+     * Checks if the user has enough valid carriers in their pool to encode
+     * a document, using the same payload basis as split(): decoded ciphertext
+     * bytes (compressed + encrypted payload before base64 transport encoding).
+     *
+     * @param  Request $request  { document_id: int }
+     * @return JsonResponse      200 { can_encode, required_bytes, available_bytes, valid_carriers, message }
+     */
+    public function preflight(Request $request): JsonResponse
+    {
+        $request->validate([
+            'document_id' => ['required', 'integer', 'exists:documents,id'],
+            'use_system_carriers' => ['nullable', 'boolean'],
+        ]);
+
+        $user = Auth::user();
+        $useSystemCarriers = (bool) $request->boolean('use_system_carriers');
+        $document = Document::findOrFail($request->document_id);
+
+        // Read document and compute required payload bytes on the same basis
+        // used by SegmentationService::split() capacity validation.
+        try {
+            $plaintext = $this->readDocumentPlaintext($document);
+            $compressed = gzcompress($plaintext, 6);
+            if ($compressed === false) {
+                throw new \RuntimeException('Unable to prepare document for preflight capacity check.');
+            }
+
+            // AES-GCM ciphertext length equals compressed plaintext length.
+            $requiredBytes = strlen($compressed);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        // Get available carriers from pool
+        $availableCarriers = StegoCarrier::where('uploaded_by', $user->id)
+            ->where('validation_status', 'valid')
+            ->where('is_in_use', false)
+            ->get();
+
+        $userPoolBytes = $availableCarriers->sum('capacity_bytes');
+        $validCarrierCount = $availableCarriers->count();
+
+        $systemPoolBytes = 0;
+        if ($useSystemCarriers) {
+            $adminId = User::where('role', 'admin')->value('id');
+            if ($adminId) {
+                $systemPoolBytes = StegoCarrier::where('uploaded_by', $adminId)
+                    ->where('validation_status', 'valid')
+                    ->where('is_in_use', false)
+                    ->sum('capacity_bytes');
+            }
+        }
+
+        $availableBytes = $userPoolBytes + $systemPoolBytes;
+
+        $canEncode = $availableBytes >= $requiredBytes;
+
+        return response()->json([
+            'can_encode' => $canEncode,
+            'required_bytes' => $requiredBytes,
+            'required_bytes_basis' => 'decoded_ciphertext',
+            'available_bytes' => $availableBytes,
+            'user_pool_bytes' => $userPoolBytes,
+            'system_pool_bytes' => $systemPoolBytes,
+            'valid_carriers' => $validCarrierCount,
+            'message' => $canEncode
+                ? 'Sufficient carrier capacity available for decoded ciphertext payload bytes.'
+                : 'Insufficient carrier capacity for decoded ciphertext payload bytes. Please upload more carriers.',
+        ]);
+    }
+
+    /**
+     * Validate whether stego-related files exist on the configured cloud disk.
+     *
+     * Supported payloads:
+     * - { carrier_names: string[] }
+     * - { stego_document_id: int }
+     * - { stego_document_ids: int[] }
+     *
+     * @param  Request $request
+     * @return JsonResponse
+     */
+    public function validateCloudFiles(Request $request): JsonResponse
+    {
+        $request->validate([
+            'carrier_names' => ['nullable', 'array'],
+            'carrier_names.*' => ['string', 'max:255'],
+            'stego_document_id' => ['nullable', 'integer'],
+            'stego_document_ids' => ['nullable', 'array'],
+            'stego_document_ids.*' => ['integer'],
+        ]);
+
+        $carrierNames = $request->input('carrier_names', []);
+        $singleDocId = $request->input('stego_document_id');
+        $docIds = $request->input('stego_document_ids', []);
+
+        if (empty($carrierNames) && empty($singleDocId) && empty($docIds)) {
+            return response()->json([
+                'message' => 'Provide carrier_names, stego_document_id, or stego_document_ids.',
+            ], 422);
+        }
+
+        $user = Auth::user();
+        $cloud = $this->cloudStorage();
+
+        $checks = [];
+        $overallValid = true;
+
+        if (!empty($carrierNames)) {
+            $carrierChecks = [];
+            foreach ($carrierNames as $carrierName) {
+                $normalizedName = basename((string) $carrierName);
+                $key = $cloud->carrierKey($user->id, $normalizedName);
+                $exists = $cloud->exists($key);
+
+                $carrierChecks[] = [
+                    'name' => $normalizedName,
+                    'key' => $key,
+                    'exists' => $exists,
+                ];
+
+                $overallValid = $overallValid && $exists;
+            }
+
+            $checks['carriers'] = [
+                'all_in_cloud' => collect($carrierChecks)->every(fn (array $c) => $c['exists'] === true),
+                'items' => $carrierChecks,
+            ];
+        }
+
+        if (!empty($singleDocId)) {
+            $docCheck = $this->buildDocumentCloudValidation((int) $singleDocId, $user->id);
+            $checks['document'] = $docCheck;
+            $overallValid = $overallValid && ($docCheck['all_segments_in_cloud'] ?? false);
+        }
+
+        if (!empty($docIds)) {
+            $bulkChecks = [];
+            foreach ($docIds as $docId) {
+                $bulkChecks[] = $this->buildDocumentCloudValidation((int) $docId, $user->id);
+            }
+
+            $allBulkValid = collect($bulkChecks)->every(fn (array $item) => ($item['all_segments_in_cloud'] ?? false) === true);
+            $checks['documents'] = [
+                'all_in_cloud' => $allBulkValid,
+                'items' => $bulkChecks,
+            ];
+
+            $overallValid = $overallValid && $allBulkValid;
+        }
+
+        return response()->json([
+            'overall_valid' => $overallValid,
+            'cloud_disk' => (string) config('stegolock.storage.disk', 'local'),
+            'checks' => $checks,
+        ]);
+    }
+
+    /**
+     * Estimate decoding time for a stego document.
+     *
+     * Authorization: owner OR granted viewer.
+     *
+     * @param  int $id StegoDocument id
+     * @return JsonResponse
+     */
+    public function estimateDecodingTime(int $id): JsonResponse
+    {
+        $user = Auth::user();
+        
+        $stegoDoc = StegoDocument::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('viewerGrants', fn ($g) =>
+                      $g->where('viewer_user_id', $user->id)
+                  );
+            })
+            ->where('id', $id)
+            ->firstOrFail();
+
+        $estimatedTime = $this->stegoService->estimateDecodingTime($stegoDoc->id);
+
+        return response()->json([
+            'estimated_decoding_time' => $estimatedTime,
+        ]);
+    }
+
     public function revokeGrant(Request $request, int $id, int $viewerUserId): JsonResponse
     {
         $user = Auth::user();
@@ -501,5 +728,65 @@ class StegoDocumentController extends Controller
         $grant->delete();
 
         return response()->json(['message' => 'Grant revoked.']);
+    }
+
+    /**
+     * @param  int $stegoDocumentId
+     * @param  int $userId
+     * @return array<string, mixed>
+     */
+    private function buildDocumentCloudValidation(int $stegoDocumentId, int $userId): array
+    {
+        $stegoDoc = StegoDocument::where(function ($q) use ($userId) {
+                $q->where('user_id', $userId)
+                  ->orWhereHas('viewerGrants', fn ($g) => $g->where('viewer_user_id', $userId));
+            })
+            ->where('id', $stegoDocumentId)
+            ->with(['segments:id,stego_document_id,stego_carrier_id,segment_index,s3_key', 'segments.carrier:id,s3_key'])
+            ->first();
+
+        if (!$stegoDoc) {
+            return [
+                'stego_document_id' => $stegoDocumentId,
+                'all_segments_in_cloud' => false,
+                'error' => 'Stego document not found or access denied.',
+            ];
+        }
+
+        $items = [];
+        foreach ($stegoDoc->segments as $segment) {
+            $key = $segment->s3_key ?: $segment->carrier?->s3_key;
+            $keySource = $segment->s3_key
+                ? 'segment.s3_key'
+                : ($segment->carrier?->s3_key ? 'carrier.s3_key' : 'none');
+
+            $exists = $key ? $this->cloudStorage()->exists($key) : false;
+
+            $items[] = [
+                'segment_index' => $segment->segment_index,
+                'stego_carrier_id' => $segment->stego_carrier_id,
+                'key' => $key,
+                'key_source' => $keySource,
+                'exists' => $exists,
+            ];
+        }
+
+        $allSegmentsInCloud = !empty($items) && collect($items)->every(fn (array $item) => $item['exists'] === true);
+
+        return [
+            'stego_document_id' => $stegoDoc->id,
+            'segments_total' => count($items),
+            'all_segments_in_cloud' => $allSegmentsInCloud,
+            'items' => $items,
+        ];
+    }
+
+    private function cloudStorage(): CloudStorageService
+    {
+        if ($this->cloudStorage === null) {
+            $this->cloudStorage = app(CloudStorageService::class);
+        }
+
+        return $this->cloudStorage;
     }
 }

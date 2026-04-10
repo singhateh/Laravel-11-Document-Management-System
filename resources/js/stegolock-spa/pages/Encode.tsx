@@ -25,7 +25,24 @@ export default function Encode() {
 
     const addFiles = (files: FileList | null) => {
         if (!files) return;
-        const valid = Array.from(files).filter((f) => /\.(png|bmp|jpe?g)$/i.test(f.name));
+        const valid = Array.from(files).filter((f) =>
+            /\.(png|bmp|jpe?g)$/i.test(f.name) && f.size <= 100 * 1024 * 1024
+        );
+        const invalid = Array.from(files).filter((f) =>
+            !/\.(png|bmp|jpe?g)$/i.test(f.name) || f.size > 100 * 1024 * 1024
+        );
+        if (invalid.length > 0) {
+            const messages = [];
+            const invalidTypes = invalid.filter(f => !/\.(png|bmp|jpe?g)$/i.test(f.name));
+            const oversized = invalid.filter(f => f.size > 100 * 1024 * 1024);
+            if (invalidTypes.length > 0) {
+                messages.push(`Invalid type(s): ${invalidTypes.map(f => f.name).join(', ')} (only PNG/BMP/JPEG)`);
+            }
+            if (oversized.length > 0) {
+                messages.push(`Too large: ${oversized.map(f => f.name).join(', ')} (max 100 MB)`);
+            }
+            setErrors({ carriers: messages.join('. ') });
+        }
         setCarriers((prev) => [...prev, ...valid]);
     };
 
@@ -119,7 +136,7 @@ export default function Encode() {
                     {step === 2 && (
                         <div>
                             <h2 className="mb-1 font-semibold text-gray-800">Upload carrier images (PNG / BMP / JPEG)</h2>
-                            <p className="mb-4 text-sm text-gray-500">Data is dynamically distributed across all carriers using LSB steganography for optimal PSNR. Each carrier must meet PSNR â‰¥ 40 dB.</p>
+                            <p className="mb-4 text-sm text-gray-500">PNG, BMP, or JPEG only (max 100 MB per file). Data is dynamically distributed across all carriers using LSB steganography for optimal PSNR. Each carrier must meet PSNR ≥ 40 dB.</p>
 
                             {/* Encoding summary */}
                             <div className="mb-4 rounded-lg bg-gray-50 p-3 text-sm">

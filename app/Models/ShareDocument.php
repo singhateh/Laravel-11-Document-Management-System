@@ -15,17 +15,25 @@ class ShareDocument extends Model
         'shared_id', 'name', 'token',
         'slug', 'valid_until', 'visibility',
         'share_id', 'share_type', 'user_type', 'user_id',
-        'can_download', 'can_upload', 'can_edit', 'can_comment', 'can_share',
         'permission_level',
     ];
 
-    protected $casts = [
-        'can_download' => 'boolean',
-        'can_upload'   => 'boolean',
-        'can_edit'     => 'boolean',
-        'can_comment'  => 'boolean',
-        'can_share'    => 'boolean',
+    /**
+     * Computed attributes to append to JSON serialization.
+     * These derive from permission_level (the single source of truth).
+     */
+    protected $appends = [
+        'can_download',
+        'can_upload',
+        'can_edit',
+        'can_comment',
+        'can_share',
     ];
+
+    // NOTE: The five boolean columns (can_download, can_upload, can_edit,
+    // can_comment, can_share) were dropped in migration 2026_04_06_000002.
+    // permission_level is now the single source of truth. Computed accessors
+    // below derive boolean values at runtime.
 
     // Permission levels
     const PERMISSION_VIEWER = 'viewer';
@@ -33,6 +41,18 @@ class ShareDocument extends Model
     const PERMISSION_EDITOR = 'editor';
     const PERMISSION_CO_OWNER = 'co_owner';
     const PERMISSION_OWNER = 'owner';
+
+    /**
+     * Permission capability matrix — the single source of truth for what each
+     * role can do.  If you add a new permission level, update this map.
+     */
+    const PERMISSION_MATRIX = [
+        self::PERMISSION_VIEWER   => ['download' => true,  'upload' => false, 'edit' => false, 'comment' => false, 'share' => false],
+        self::PERMISSION_COMMENTER => ['download' => true,  'upload' => false, 'edit' => false, 'comment' => true,  'share' => false],
+        self::PERMISSION_EDITOR   => ['download' => true,  'upload' => true,  'edit' => true,  'comment' => true,  'share' => false],
+        self::PERMISSION_CO_OWNER => ['download' => true,  'upload' => true,  'edit' => true,  'comment' => true,  'share' => true],
+        self::PERMISSION_OWNER    => ['download' => true,  'upload' => true,  'edit' => true,  'comment' => true,  'share' => true],
+    ];
 
     public static function getPermissionLevels()
     {
@@ -48,46 +68,6 @@ class ShareDocument extends Model
     public function setPermissionLevel($level)
     {
         $this->permission_level = $level;
-        
-        // Set individual permissions based on level
-        switch ($level) {
-            case self::PERMISSION_VIEWER:
-                $this->can_download = true;
-                $this->can_upload = false;
-                $this->can_edit = false;
-                $this->can_comment = false;
-                $this->can_share = false;
-                break;
-            case self::PERMISSION_COMMENTER:
-                $this->can_download = true;
-                $this->can_upload = false;
-                $this->can_edit = false;
-                $this->can_comment = true;
-                $this->can_share = false;
-                break;
-            case self::PERMISSION_EDITOR:
-                $this->can_download = true;
-                $this->can_upload = true;
-                $this->can_edit = true;
-                $this->can_comment = true;
-                $this->can_share = false;
-                break;
-            case self::PERMISSION_CO_OWNER:
-                $this->can_download = true;
-                $this->can_upload = true;
-                $this->can_edit = true;
-                $this->can_comment = true;
-                $this->can_share = true;
-                break;
-            case self::PERMISSION_OWNER:
-                $this->can_download = true;
-                $this->can_upload = true;
-                $this->can_edit = true;
-                $this->can_comment = true;
-                $this->can_share = true;
-                break;
-        }
-        
         return $this;
     }
 
@@ -96,9 +76,40 @@ class ShareDocument extends Model
         return $this->permission_level ?: self::PERMISSION_VIEWER;
     }
 
+    // -------------------------------------------------------------------------
+    // Computed accessors — derive boolean permissions from permission_level
+    // -------------------------------------------------------------------------
+
+    public function getCanDownloadAttribute(): bool
+    {
+        return self::PERMISSION_MATRIX[$this->getPermissionLevel()]['download'] ?? false;
+    }
+
+    public function getCanUploadAttribute(): bool
+    {
+        return self::PERMISSION_MATRIX[$this->getPermissionLevel()]['upload'] ?? false;
+    }
+
+    public function getCanEditAttribute(): bool
+    {
+        return self::PERMISSION_MATRIX[$this->getPermissionLevel()]['edit'] ?? false;
+    }
+
+    public function getCanCommentAttribute(): bool
+    {
+        return self::PERMISSION_MATRIX[$this->getPermissionLevel()]['comment'] ?? false;
+    }
+
+    public function getCanShareAttribute(): bool
+    {
+        return self::PERMISSION_MATRIX[$this->getPermissionLevel()]['share'] ?? false;
+    }
+
     public function hasPermission($permission)
     {
-        return $this->$permission === true;
+        // Accept both 'can_download' and 'download' style keys
+        $key = str_replace('can_', '', $permission);
+        return $this->{'can_' . ucfirst($key)} === true;
     }
 
     public function isOwner()
