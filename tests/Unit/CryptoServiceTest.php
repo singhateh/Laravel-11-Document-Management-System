@@ -1,0 +1,317 @@
+<?php
+
+namespace Tests\Unit;
+
+use App\Services\Stego\CryptoService;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
+
+/**
+ * CryptoServiceTest
+ *
+ * Unit tests for the CryptoService class.
+ * All tests run entirely in-memory — no database, no filesystem, no HTTP.
+ *
+ * Coverage goals:
+ *  - MKD: deterministic re-derivation with same salt
+ *  - MKD: different salts → different keys
+ *  - DEK: deterministic re-derivation from master key + document ID
+ *  - Encrypt / decrypt round-trip returns original plaintext
+ *  - Decryption with wrong key throws
+ *  - Decryption with tampered ciphertext throws
+ *  - SHA-256 hash + verify round-trip
+ *  - Hash verification fails on altered content
+ */
+class CryptoServiceTest extends TestCase
+{
+    private CryptoService $crypto;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->crypto = new CryptoService();
+    }
+
+    // -------------------------------------------------------------------------
+    // Master Key Derivation
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function mkd_is_deterministic_given_same_password_and_salt(): void
+    {
+        $result1 = $this->crypto->deriveMasterKey('SecurePass1!', null);
+        $result2 = $this->crypto->deriveMasterKey('SecurePass1!', $result1['salt']);
+
+        $this->assertSame($result1['masterKey'], $result2['masterKey']);
+    }
+
+    #[Test]
+    public function mkd_generates_unique_salt_each_call_when_salt_is_null(): void
+    {
+        $result1 = $this->crypto->deriveMasterKey('SecurePass1!', null);
+        $result2 = $this->crypto->deriveMasterKey('SecurePass1!', null);
+
+        $this->assertNotSame($result1['salt'], $result2['salt']);
+    }
+
+    #[Test]
+    public function mkd_different_salts_produce_different_keys(): void
+    {
+        $result1 = $this->crypto->deriveMasterKey('SecurePass1!', null);
+        $result2 = $this->crypto->deriveMasterKey('SecurePass1!', null);
+
+        $this->assertNotSame($result1['masterKey'], $result2['masterKey']);
+    }
+
+    #[Test]
+    public function mkd_returns_256_bit_key_as_64_hex_chars(): void
+    {
+        $result = $this->crypto->deriveMasterKey('SecurePass1!');
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{64}$/', $result['masterKey']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Document Encryption Key (DEK)
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function dek_is_deterministic_given_same_master_key_document_id_and_salt(): void
+    {
+        $mkd     = $this->crypto->deriveMasterKey('SecurePass1!');
+        $result1 = $this->crypto->deriveDEK($mkd['masterKey'], '42');
+        $result2 = $this->crypto->deriveDEK($mkd['masterKey'], '42', $result1['salt']);
+
+        $this->assertSame($result1['dek'], $result2['dek']);
+    }
+
+    #[Test]
+    public function dek_differs_per_document_id(): void
+    {
+        $mkd     = $this->crypto->deriveMasterKey('SecurePass1!');
+        $result1 = $this->crypto->deriveDEK($mkd['masterKey'], '42');
+        $result2 = $this->crypto->deriveDEK($mkd['masterKey'], '99');
+
+        $this->assertNotSame($result1['dek'], $result2['dek']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Encrypt / Decrypt round-trip
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function encrypt_decrypt_round_trip_returns_original_plaintext(): void
+    {
+        $mkd       = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek       = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        $plaintext = 'Hello, StegoLock! This is a secret document.';
+
+        $encrypted = $this->crypto->encrypt($plaintext, $dek['dek']);
+
+        // encrypt() returns base64-encoded ciphertext for safe storage.
+        // decrypt() receives raw binary (as reassembled from carrier extraction),
+        // so we must base64_decode first — matching what SegmentationService::split() does.
+        $rawCiphertext = base64_decode($encrypted['ciphertext']);
+
+        $decrypted = $this->crypto->decrypt(
+            $rawCiphertext,
+            $dek['dek'],
+            $encrypted['iv'],
+            $encrypted['auth_tag']
+        );
+
+        $this->assertSame($plaintext, $decrypted);
+    }
+
+    #[Test]
+    public function decrypt_with_wrong_key_throws(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/decryption failed/i');
+
+        $mkd1      = $this->crypto->deriveMasterKey('CorrectPass1!');
+        $mkd2      = $this->crypto->deriveMasterKey('WrongPass1!');
+        $dek1      = $this->crypto->deriveDEK($mkd1['masterKey'], 'doc-1');
+        $dek2      = $this->crypto->deriveDEK($mkd2['masterKey'], 'doc-1');
+        $encrypted = $this->crypto->encrypt('secret', $dek1['dek']);
+
+        // Pass raw binary (as would come from carrier extraction) with the wrong DEK.
+        $this->crypto->decrypt(
+            base64_decode($encrypted['ciphertext']),
+            $dek2['dek'],
+            $encrypted['iv'],
+            $encrypted['auth_tag']
+        );
+    }
+
+    #[Test]
+    public function decrypt_with_tampered_ciphertext_throws(): void
+    {
+        $this->expectException(\Exception::class);
+
+        $mkd       = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek       = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        $encrypted = $this->crypto->encrypt('secret data', $dek['dek']);
+
+        // Decode to raw binary, flip all bits of the first byte, then pass tampered
+        // raw binary directly to decrypt() — matching how carrier extraction delivers data.
+        $raw     = base64_decode($encrypted['ciphertext']);
+        $raw[0]  = chr(ord($raw[0]) ^ 0xFF);
+
+        $this->crypto->decrypt($raw, $dek['dek'], $encrypted['iv'], $encrypted['auth_tag']);
+    }
+
+    #[Test]
+    public function each_encrypt_call_uses_a_unique_iv(): void
+    {
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+
+        $enc1 = $this->crypto->encrypt('same content', $dek['dek']);
+        $enc2 = $this->crypto->encrypt('same content', $dek['dek']);
+
+        $this->assertNotSame($enc1['iv'], $enc2['iv']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Hashing
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function hash_verify_round_trip_passes(): void
+    {
+        $content = 'document contents';
+        $hash    = $this->crypto->hashDocument($content);
+
+        $this->assertTrue($this->crypto->verifyHash($content, $hash));
+    }
+
+    #[Test]
+    public function verify_hash_fails_on_altered_content(): void
+    {
+        $hash = $this->crypto->hashDocument('original content');
+
+        $this->assertFalse($this->crypto->verifyHash('altered content', $hash));
+    }
+
+    // -------------------------------------------------------------------------
+    // Validation checks
+    // -------------------------------------------------------------------------
+
+    #[Test]
+    public function encrypt_throws_with_empty_plaintext(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/plaintext cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->encrypt('', $dek['dek']);
+    }
+
+    #[Test]
+    public function encrypt_throws_with_empty_dek(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/dek cannot be empty/i');
+        
+        $this->crypto->encrypt('test content', '');
+    }
+
+    #[Test]
+    public function encrypt_throws_with_invalid_dek_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a hex-encoded string of 64 characters/i');
+        
+        $this->crypto->encrypt('test content', str_repeat('0', 63)); // 63 characters
+    }
+
+    #[Test]
+    public function encrypt_throws_with_invalid_dek_format(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a hex-encoded string/i');
+        
+        $this->crypto->encrypt('test content', 'invalid-dek');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_ciphertext(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/ciphertext cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('', $dek['dek'], 'iv', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_dek(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/dek cannot be empty/i');
+        
+        $this->crypto->decrypt('ciphertext', '', 'iv', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_invalid_dek(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a hex-encoded string of 64 characters/i');
+        
+        $this->crypto->decrypt('ciphertext', str_repeat('0', 63), 'iv', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_iv(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/iv cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], '', 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_invalid_iv_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a base64-encoded string of 12 bytes/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], base64_encode(str_repeat('0', 11)), 'authTag');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_empty_auth_tag(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/auth tag cannot be empty/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], base64_encode(str_repeat('0', 12)), '');
+    }
+
+    #[Test]
+    public function decrypt_throws_with_invalid_auth_tag_length(): void
+    {
+        $this->expectException(\Exception::class);
+        $this->expectExceptionMessageMatches('/must be a base64-encoded string of 16 bytes/i');
+        
+        $mkd = $this->crypto->deriveMasterKey('SecurePass1!');
+        $dek = $this->crypto->deriveDEK($mkd['masterKey'], 'doc-1');
+        
+        $this->crypto->decrypt('ciphertext', $dek['dek'], base64_encode(str_repeat('0', 12)), base64_encode(str_repeat('0', 15)));
+    }
+}

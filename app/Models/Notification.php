@@ -19,16 +19,15 @@ class Notification extends Model
     // protected $deleted_at  = false;
 
     protected $fillable = [
-        'user_id',
-        'user_type',
+        'notifiable_id',
+        'notifiable_type',
         'activity_type',
         'model_type',
         'model_id',
         'message',
         'status',
         'dismiss_status',
-        'created_by_type',
-        'created_by_id',
+        'created_by_user_id',
     ];
 
 
@@ -45,7 +44,7 @@ class Notification extends Model
                 $user = Auth::user();
                 $cacheKey = 'dashboard_data_' . $user?->id;
                 Cache::forget($cacheKey);
-                Cache::forget('notifications');
+                Cache::forget('notifications_' . $user?->id);
             }
         });
 
@@ -54,7 +53,7 @@ class Notification extends Model
                 $user = Auth::user();
                 $cacheKey = 'dashboard_data_' . $user?->id;
                 Cache::forget($cacheKey);
-                Cache::forget('notifications');
+                Cache::forget('notifications_' . $user?->id);
             }
         });
 
@@ -62,14 +61,19 @@ class Notification extends Model
             $user = Auth::user();
             $cacheKey = 'dashboard_data_' . $user?->id;
             Cache::forget($cacheKey);
-            Cache::forget('notifications');
+            Cache::forget('notifications_' . $user?->id);
         });
     }
 
 
-    public function user()
+    public function notifiable()
     {
-        return $this->morphTo();
+        return $this->morphTo('notifiable', 'notifiable_type', 'notifiable_id');
+    }
+
+    public function createdBy()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'created_by_user_id');
     }
 
     public function model()

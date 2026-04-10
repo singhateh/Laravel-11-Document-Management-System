@@ -11,7 +11,7 @@ class StoreShareDocumentRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -22,7 +22,13 @@ class StoreShareDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            //
+            'shared_id' => ['required'],
+            'token' => ['nullable', 'string', 'max:255', 'unique:share_documents,token'],
+            'slug' => ['required', 'in:document,folder,stego'],
+            'name' => ['required', 'string', 'max:255'],
+            'valid_until' => ['nullable', 'date', 'after:now'],
+            'visibility' => ['nullable', 'in:public,private'],
+            'permission_level' => ['nullable', 'in:viewer,commenter,editor,co_owner,owner'],
         ];
     }
 }

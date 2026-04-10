@@ -15,7 +15,6 @@ class FileRequest extends Model
         'folder_id',
         'tag_id',
         'due_date_in_number',
-        'due_date_in_word',
         'note',
     ];
 }

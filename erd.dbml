@@ -1,0 +1,540 @@
+// ============================================================
+// AUTH & SESSION TABLES
+// ============================================================
+
+Table users {
+  id bigint [pk, increment]
+  name varchar [not null]
+  username varchar [unique]
+  email varchar [unique, not null]
+  email_verified_at timestamp
+  password varchar [not null]
+  remember_token varchar
+  avatar varchar
+  role "enum('user','owner','admin')" [default: 'user']
+  // PBKDF2-SHA256 salt for Master Key Derivation (hex, 32 chars = 16 bytes).
+  // Generated at registration; never stored with the derived key itself.
+  mkd_salt varchar(32)
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table password_reset_tokens {
+  email varchar [pk]
+  token varchar [not null]
+  created_at timestamp
+}
+
+Table sessions {
+  id varchar [pk]
+  // NOTE: No FK constraint in migration — only an index. Nullable to allow guest sessions.
+  user_id bigint
+  ip_address varchar
+  user_agent text
+  payload longtext [not null]
+  last_activity int [not null]
+}
+
+Table personal_access_tokens {
+  id bigint [pk, increment]
+  tokenable_type varchar [not null]
+  tokenable_id bigint [not null]
+  name text [not null]
+  token varchar(64) [unique, not null]
+  abilities text
+  last_used_at timestamp
+  expires_at timestamp
+  created_at timestamp
+  updated_at timestamp
+}
+
+// ============================================================
+// QUEUE & CACHE TABLES
+// ============================================================
+
+// ⚠ ARCH NOTE (conditional): jobs and failed_jobs could be unified into one table
+//   with status enum('pending','reserved','failed') and nullable exception/failed_at.
+//   CAVEAT: Laravel's built-in queue driver expects failed_jobs as a separate table.
+//   Only viable with a custom queue driver. job_batches must always stay separate.
+Table jobs {
+  id bigint [pk, increment]
+  queue varchar [not null]
+  payload longtext [not null]
+  attempts tinyint [not null]
+  reserved_at int
+  available_at int [not null]
+  created_at int [not null]
+}
+
+Table job_batches {
+  id varchar [pk]
+  name varchar [not null]
+  total_jobs int [not null]
+  pending_jobs int [not null]
+  failed_jobs int [not null]
+  failed_job_ids longtext [not null]
+  options mediumtext
+  cancelled_at int
+  created_at int [not null]
+  finished_at int
+}
+
+Table failed_jobs {
+  id bigint [pk, increment]
+  uuid varchar [unique, not null]
+  connection text [not null]
+  queue text [not null]
+  payload longtext [not null]
+  exception longtext [not null]
+  failed_at timestamp [not null]
+}
+
+// ⚠ ARCH NOTE (conditional): cache and cache_locks share the same key/expiration
+//   structure and could be merged with a type enum('cache','lock') discriminator.
+//   CAVEAT: Laravel's built-in cache driver expects two separate tables by default.
+//   Only viable with a custom cache driver. Do not merge without owning the driver layer.
+Table cache {
+  key varchar [pk]
+  value mediumtext [not null]
+  expiration int [not null]
+}
+
+Table cache_locks {
+  key varchar [pk]
+  owner varchar [not null]
+  expiration int [not null]
+}
+
+// ============================================================
+// ACL & AUDIT TABLES
+// ============================================================
+
+// ARCH DECISION: Two-layer authorization model.
+//   Layer 1 — users.role enum: canonical coarse role (user/owner/admin).
+//              Used for route-level guards and fast user classification.
+//              This is the single source of truth for the user's base role.
+//   Layer 2 — role_grants: fine-grained, resource-scoped permission records.
+//              Extends Layer 1; never replaces it. Do not query both layers
+//              for the same check — use users.role for role-level guards,
+//              role_grants for resource-level permission checks.
+Table role_grants {
+  id bigint [pk, increment]
+  role varchar [not null]
+  permission varchar [not null]
+  resource varchar
+  user_id bigint [ref: > users.id]
+  is_granted boolean [default: true]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (role, permission, resource, user_id) [unique]
+  }
+}
+
+// NOTE: Log rows are immutable — no updated_at. accessed_at is the authoritative
+//       timestamp; created_at was redundant with it and has been dropped.
+Table access_logs {
+  id bigint [pk, increment]
+  user_id bigint [ref: > users.id]
+  action varchar [not null]
+  resource varchar
+  resource_id bigint
+  ip_address varchar
+  user_agent varchar
+  method varchar
+  url varchar
+  status_code int
+  payload json
+  accessed_at timestamp [default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (user_id, accessed_at)
+    (resource, resource_id)
+  }
+}
+
+// ============================================================
+// CORE CONTENT TABLES
+// ============================================================
+
+Table folders {
+  id bigint [pk, increment]
+  position bigint [default: 0]
+  name varchar [not null]
+  parent_id bigint [ref: > folders.id]
+  visibility "enum('public','private')" [default: 'public']
+  background_color varchar
+  foreground_color varchar
+  // NOTE: 'tags' varchar column removed — 1NF violation.
+  //       Use folder_tag pivot table instead.
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+
+  indexes {
+    (parent_id) [name: 'folders_parent_id_index']
+  }
+}
+
+Table documents {
+  id bigint [pk, increment]
+  position bigint [default: 0]
+  // Flag: false = legacy plaintext file; true = AES-256-GCM encrypted at rest.
+  is_encrypted boolean [default: false]
+  name varchar
+  original_name varchar
+  file_path varchar
+  size bigint
+  extension varchar
+  folder_id bigint [ref: > folders.id]
+  // FIX: Changed from varchar to enum to match folders.visibility (type consistency)
+  visibility "enum('public','private')" [default: 'public']
+  share bigint [default: 0]
+  download bigint [default: 0]
+  // NOTE: 'email' and 'url' lack formal semantic definitions.
+  //   'email' — submitter/recipient email for externally sourced documents.
+  //   'url'   — source URL when the document is a web link (e.g. YouTube).
+  // REMOVED: 'contact' — confirmed unused in app code. Dead column removed.
+  //   Rename candidates: source_email, source_url.
+  email varchar
+  url varchar
+  // FIX: Replaced free-text 'owner varchar' with owner_id FK to users
+  //      to eliminate transitive dependency (3NF): document → owner name → user record
+  owner_id bigint [ref: > users.id]
+  // RENAMED from 'date' (ambiguous, reserved word in SQL) → document_date.
+  document_date timestamp
+  // NOTE: 'emojis' varchar column is still present in the base schema (migration 2026_04_07_000002).
+  //       The 1NF-fix migration (2026_04_06_000001) drops it and migrates data to emojiables.
+  //       For fresh installs using consolidated migrations, this column exists until explicitly dropped.
+  emojis varchar
+  // ---- At-rest encryption metadata (AES-256-GCM) ----
+  // NOTE: Structurally similar to stego_documents encryption fields but intentionally
+  //       separate — these encrypt the file on disk; stego_documents encrypts content
+  //       hidden via steganography. Merging would conflate two distinct concerns.
+  enc_iv varchar(24)          // AES-256-GCM IV: 12 bytes → 24 hex chars
+  enc_auth_tag varchar(32)    // GCM auth tag: 16 bytes → 32 hex chars
+  enc_dek_salt varchar(32)    // PBKDF2 salt for DEK derivation: 16 bytes → 32 hex chars
+  enc_dek_iterations int      // PBKDF2 iteration count (stored to survive future changes)
+  enc_hash_sha256 varchar(64) // SHA-256 of plaintext; verified after decryption
+  // Document watcher tracking fields (added by migration 2026_04_07_000008)
+  last_updated_at timestamp
+  // FIX: 3NF transitive dependency — replaced text column with FK to users.
+  last_updated_by_user_id bigint [ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+
+  indexes {
+    (folder_id, owner_id) [name: 'documents_folder_id_owner_id_index']
+    (owner_id) [name: 'documents_owner_id_index']
+  }
+}
+
+Table comments {
+  id bigint [pk, increment]
+  document_id bigint [not null, ref: > documents.id]
+  user_id bigint [not null, ref: > users.id]
+  content text [not null]
+  parent_id bigint [ref: > comments.id]
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+}
+
+// ============================================================
+// TAXONOMY TABLES
+// ============================================================
+
+Table categories {
+  id bigint [pk, increment]
+  name varchar [not null]
+  slug varchar [unique]
+  description text
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table tags {
+  id bigint [pk, increment]
+  name varchar [not null]
+  background_color varchar
+  foreground_color varchar
+  // One tag belongs to one category (direct FK — normalized; see note below)
+  category_id bigint [ref: > categories.id]
+  created_at timestamp
+  updated_at timestamp
+}
+
+// NOTE: 'category_tag' pivot table removed — it was redundant with tags.category_id.
+//       Both expressed the same tag→category relationship, creating an update anomaly risk.
+//       tags.category_id alone is sufficient for the one-to-many (category → tags) relation.
+
+// ---- Pivot Tables ----
+
+// NOTE: folder_tag and document_tag tables have been dropped and merged into
+// taggables (polymorphic M:M). See taggables table below.
+
+// MERGED: folder_tag + document_tag → taggables (polymorphic M:M)
+// Both tables were structurally identical, differing only in the left-side FK.
+// taggables follows Laravel's morphToMany pattern and makes the tag system
+// extensible to future models (e.g. comments) without new pivot tables.
+// Trade-off: taggable_id has no DB-level FK constraint (polymorphic limitation);
+// referential integrity is enforced by Eloquent and the hard FK on tag_id.
+Table taggables {
+  id bigint [pk, increment]
+  tag_id bigint [not null, ref: > tags.id]
+  taggable_id bigint [not null]    // was: folder_id or document_id
+  // IMPORTANT: Register Relation::morphMap(['folder' => Folder::class, 'document' => Document::class])
+  // in AppServiceProvider::boot(). Store short keys ('folder'/'document'), NOT full class paths.
+  // Full class paths (e.g. 'App\Models\Folder') break silently on class rename or move.
+  taggable_type varchar [not null] // 'folder' or 'document' — short key via morphMap
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (tag_id, taggable_id, taggable_type) [unique]
+    (taggable_id, taggable_type)
+  }
+}
+
+// ⚠ SEMANTIC OVERLAP NOTE: A folder is already linked to a category indirectly via
+//   taggables → tags → categories (since tags.category_id exists). This table creates
+//   a parallel *direct* folder-to-category path. Unless direct category assignment on
+//   folders is a distinct feature from tag-based categorization (e.g. a folder's
+//   primary category vs. its tagged categories), this dual path should be documented
+//   with a clear business rule or the redundancy eliminated.
+Table category_folder {
+  id bigint [pk, increment]
+  category_id bigint [not null, ref: > categories.id]
+  folder_id bigint [not null, ref: > folders.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (category_id, folder_id) [unique]
+  }
+}
+
+// ============================================================
+// EMOJI TABLES (1NF fix — replaces documents.emojis varchar)
+// ============================================================
+
+// Lookup table for distinct emoji characters.
+// Each row represents one unique emoji with its Unicode codepoint.
+Table emojis {
+  id bigint [pk, increment]
+  codepoint varchar(16) [unique, not null]  // e.g. "1F4C4" for 📄
+  emoji varchar(8) [unique, not null]       // e.g. "📄"
+  description varchar                       // e.g. "document"
+  created_at timestamp
+  updated_at timestamp
+}
+
+// Polymorphic pivot — follows the same pattern as taggables.
+// Allows any model (documents, folders, etc.) to have multiple emojis attached.
+// Trade-off: emojiable_id has no DB-level FK constraint (polymorphic limitation);
+// referential integrity is enforced by Eloquent and the hard FK on emoji_id.
+Table emojiables {
+  id bigint [pk, increment]
+  emoji_id bigint [not null, ref: > emojis.id]
+  emojiable_id bigint [not null]    // was: document_id, folder_id, etc.
+  emojiable_type varchar [not null] // 'App\Models\Document', etc.
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (emoji_id, emojiable_id, emojiable_type) [unique]
+    (emojiable_id, emojiable_type)
+  }
+}
+
+// ============================================================
+// NOTIFICATIONS & SHARING TABLES
+// ============================================================
+
+Table notifications {
+  id bigint [pk, increment]
+  // RENAMED: user_id/user_type → notifiable_id/notifiable_type (Laravel morphTo convention).
+  // Polymorphic — not a FK; nullable in migration (guest/system notifications allowed).
+  notifiable_id varchar
+  notifiable_type varchar
+  activity_type varchar [not null]
+  model_type varchar [not null]
+  model_id varchar
+  message longtext
+  status "enum('UNREAD','READ')" [default: 'UNREAD']
+  dismiss_status "enum('UNDISMISSED','DISMISSED')" [default: 'UNDISMISSED']
+  // DECISION: Creator is always a User (confirmed — all app code passes User::class).
+  // Replaced polymorphic created_by_id/created_by_type pair with a typed FK.
+  created_by_user_id bigint [not null, ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+  deleted_at timestamp
+
+  indexes {
+    (notifiable_id, notifiable_type, status, dismiss_status)
+  }
+}
+
+Table share_documents {
+  id bigint [pk, increment]
+  name varchar
+  slug varchar
+  token varchar [unique, not null]
+  // NOTE: shared_id is the URL-safe identifier used in public share links
+  //       (slug/token/shared_id triplet). share_id is the internal FK to the
+  //       shared resource. They serve different purposes and are not redundant.
+  shared_id varchar
+  // FIX: 'url' dropped — derivable from token/slug + base path (3NF violation).
+  //      Reconstruct in the application layer: route('share.show', [$slug, $token]).
+  valid_until date
+  visibility "enum('public','private')" [default: 'public']
+  // FIX: Changed from enum('yes','no') to boolean — consistent with documents.is_encrypted.
+  // NOTE: The five boolean columns (can_download, can_upload, can_edit, can_comment,
+  //       can_share) were dropped in migration 2026_04_06_000002.
+  //       permission_level is now the single source of truth; booleans are computed
+  //       at runtime via the ShareDocument model's accessors.
+  permission_level varchar [default: 'viewer']
+  user_type varchar [not null]
+  user_id bigint [not null]
+  share_type varchar [not null]
+  share_id bigint [not null]
+  created_at timestamp
+  updated_at timestamp
+}
+
+Table file_requests {
+  id bigint [pk, increment]
+  name varchar
+  // NOTE: Confirmed as an email address (Mail::to($fileRequest->request_to)).
+  //       Can be external (no FK to users). Rename candidate: request_to_email.
+  request_to varchar
+  folder_id bigint [ref: > folders.id]
+  tag_id bigint [ref: > tags.id]
+  due_date_in_number bigint
+  // NOTE: 'due_date_in_word' removed — 3NF violation.
+  //       It was derived from due_date_in_number (e.g. 3 → "3 days").
+  //       Derived values must not be stored; compute in application layer.
+  note longtext
+  created_at timestamp
+  updated_at timestamp
+}
+
+// ============================================================
+// STEGANOGRAPHY TABLES
+// ============================================================
+
+Table stego_carriers {
+  id bigint [pk, increment]
+  name varchar [not null]
+  file_path varchar [not null]
+  file_type varchar [not null]
+  mime_type varchar
+  size bigint [not null]
+  s3_key varchar
+  // PSNR in dB measured after LSB embedding (images only; null for audio/text carriers).
+  // Architecture requires PSNR >= 40 dB for image carriers.
+  psnr float
+  // Carrier pool management columns (migration 2026_03_23_000001)
+  validation_status "enum('pending','valid','invalid')" [default: 'pending']
+  validation_error varchar
+  capacity_bytes bigint
+  is_in_use boolean [default: false]
+  validated_at timestamp
+  uploaded_by bigint [ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (file_type)
+    (uploaded_by)
+    (uploaded_by, validation_status, is_in_use)
+  }
+}
+
+Table stego_documents {
+  id bigint [pk, increment]
+  status "enum('pending','ready','failed')" [default: 'ready']
+  failed_reason text
+  document_id bigint [ref: > documents.id]
+  user_id bigint [not null, ref: > users.id]
+  // ---- Steganography encryption metadata (AES-256-GCM) ----
+  // NOTE: Structurally similar to documents.enc_* but intentionally separate.
+  //       These fields encrypt content hidden inside carrier images (stegoLock);
+  //       documents.enc_* encrypts the physical file stored on disk.
+  //       Merging would conflate file-at-rest encryption with steganographic encryption.
+  ciphertext text              // hex-encoded encrypted content (nullable for pending status)
+  // NOTE: stego_ prefix distinguishes these AES-GCM fields from documents.enc_* fields.
+  //       Both are AES-256-GCM but encrypt different things: these hide content inside
+  //       a carrier image (stegoLock); documents.enc_* encrypts the file on disk.
+  stego_iv varchar(64)          // hex-encoded GCM IV (12 bytes → 24 hex) (nullable for pending status)
+  stego_auth_tag varchar(64)    // hex-encoded GCM auth tag (16 bytes → 32 hex) (nullable for pending status)
+  stego_hash_sha256 varchar(64) // SHA-256 of original plaintext (nullable for pending status)
+  stego_dek_salt varchar(64)    // hex-encoded DEK derivation salt
+  stego_dek_iter int [default: 10000]      // PBKDF2 iteration count
+  compressed boolean [default: true]        // Whether the ciphertext was compressed before encryption
+  s3_key varchar
+  // Decoding operation fields
+  decoding_status varchar [default: 'idle'] // idle, pending, in_progress, completed, failed
+  decoding_error text
+  download_path varchar
+  decoding_duration decimal(10,3) // Total decoding duration in seconds (with milliseconds precision)
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (document_id)
+    (user_id)
+    (status) [name: 'stego_documents_status_index']
+  }
+}
+
+Table stego_segments {
+  id bigint [pk, increment]
+  stego_document_id bigint [not null, ref: > stego_documents.id]
+  stego_carrier_id bigint [not null, ref: > stego_carriers.id]
+  // WIDENED from tinyint (max 255) to smallint (max 65 535) to handle large document splits.
+  segment_index smallint [not null]
+  encrypted_chunk text  // base64-encoded encrypted bytes (nullable for pending segments)
+  s3_key varchar
+  chunk_hash varchar [not null]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (stego_document_id, segment_index)
+    (stego_carrier_id)
+  }
+}
+
+Table stego_document_grants {
+  id bigint [pk, increment]
+  stego_document_id bigint [not null, ref: > stego_documents.id]
+  viewer_user_id bigint [not null, ref: > users.id]
+  granted_by bigint [not null, ref: > users.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (stego_document_id, viewer_user_id) [unique]
+    (viewer_user_id) [name: 'stego_grants_viewer_index']
+    (granted_by) [name: 'stego_grants_grantor_index']
+  }
+}
+
+// ============================================================
+// DOCUMENT WATCHERS TABLE
+// ============================================================
+
+Table document_watchers {
+  id bigint [pk, increment]
+  user_id bigint [not null, ref: > users.id]
+  document_id bigint [not null, ref: > documents.id]
+  created_at timestamp
+  updated_at timestamp
+
+  indexes {
+    (user_id, document_id) [unique]
+  }
+}

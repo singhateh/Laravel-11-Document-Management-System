@@ -8,6 +8,7 @@ use App\Http\Requests\StoreTagRequest;
 use App\Http\Requests\UpdateTagRequest;
 use App\Models\Category;
 use App\Models\Folder;
+use Inertia\Inertia;
 
 class TagController extends Controller
 {
@@ -19,7 +20,9 @@ class TagController extends Controller
 
         $folders = Folder::with('categories', 'subfolders')->get();
 
-        return view('tags.index', compact('folders'));
+        return Inertia::render('Tags/Index', [
+            'folders' => $folders,
+        ]);
     }
 
     /**
@@ -49,8 +52,7 @@ class TagController extends Controller
 
         if ($request->tags) {
             foreach ($request->tags as $tagName) {
-                $tag = Tag::firstOrCreate(['name' => $tagName]);
-                $category->tags()->attach($tag);
+                $category->tags()->firstOrCreate(['name' => trim($tagName)]);
             }
         }
 

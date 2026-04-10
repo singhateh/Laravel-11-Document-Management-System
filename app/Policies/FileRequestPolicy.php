@@ -13,7 +13,7 @@ class FileRequestPolicy
      */
     public function viewAny(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -21,7 +21,15 @@ class FileRequestPolicy
      */
     public function view(User $user, FileRequest $fileRequest): bool
     {
-        //
+        // Admin can view all file requests
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        // File request policy: only the creator or the requested user can view
+        // (Assuming file requests have a user_id or similar field indicating creator)
+        // For now, we'll assume only creator can view
+        return $fileRequest->user_id === $user->id;
     }
 
     /**
@@ -29,7 +37,7 @@ class FileRequestPolicy
      */
     public function create(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -37,7 +45,12 @@ class FileRequestPolicy
      */
     public function update(User $user, FileRequest $fileRequest): bool
     {
-        //
+        // Admin can update all file requests
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $fileRequest->user_id === $user->id;
     }
 
     /**
@@ -45,7 +58,12 @@ class FileRequestPolicy
      */
     public function delete(User $user, FileRequest $fileRequest): bool
     {
-        //
+        // Admin can delete all file requests
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $fileRequest->user_id === $user->id;
     }
 
     /**
@@ -53,7 +71,12 @@ class FileRequestPolicy
      */
     public function restore(User $user, FileRequest $fileRequest): bool
     {
-        //
+        // Admin can restore all file requests
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $fileRequest->user_id === $user->id;
     }
 
     /**
@@ -61,6 +84,11 @@ class FileRequestPolicy
      */
     public function forceDelete(User $user, FileRequest $fileRequest): bool
     {
-        //
+        // Admin can force delete all file requests
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $fileRequest->user_id === $user->id;
     }
 }

@@ -11,7 +11,7 @@ class UpdateTagRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -22,7 +22,9 @@ class UpdateTagRequest extends FormRequest
     public function rules(): array
     {
         return [
-            //
+            'name' => ['sometimes', 'string', 'max:255'],
+            'background_color' => ['nullable', 'string', 'max:50'],
+            'foreground_color' => ['nullable', 'string', 'max:50'],
         ];
     }
 }

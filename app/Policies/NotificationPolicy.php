@@ -13,7 +13,7 @@ class NotificationPolicy
      */
     public function viewAny(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -21,7 +21,13 @@ class NotificationPolicy
      */
     public function view(User $user, Notification $notification): bool
     {
-        //
+        // Admin can view all notifications
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        // Notification policy: only the notifiable user can view their notifications
+        return $notification->notifiable_id == $user->id;
     }
 
     /**
@@ -29,7 +35,7 @@ class NotificationPolicy
      */
     public function create(User $user): bool
     {
-        //
+        return true;
     }
 
     /**
@@ -37,7 +43,12 @@ class NotificationPolicy
      */
     public function update(User $user, Notification $notification): bool
     {
-        //
+        // Admin can update all notifications
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $notification->notifiable_id == $user->id;
     }
 
     /**
@@ -45,7 +56,12 @@ class NotificationPolicy
      */
     public function delete(User $user, Notification $notification): bool
     {
-        //
+        // Admin can delete all notifications
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $notification->notifiable_id == $user->id;
     }
 
     /**
@@ -53,7 +69,12 @@ class NotificationPolicy
      */
     public function restore(User $user, Notification $notification): bool
     {
-        //
+        // Admin can restore all notifications
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $notification->notifiable_id == $user->id;
     }
 
     /**
@@ -61,6 +82,11 @@ class NotificationPolicy
      */
     public function forceDelete(User $user, Notification $notification): bool
     {
-        //
+        // Admin can force delete all notifications
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        return $notification->notifiable_id == $user->id;
     }
 }

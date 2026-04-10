@@ -1,0 +1,492 @@
+{
+  "version": "1.0.0",
+  "darkMode": true,
+  "gridEnabling": false,
+  "detailLevel": "All",
+  "tablePositions": [
+    {
+      "name": "users",
+      "schemaName": "public",
+      "x": 0,
+      "y": 50
+    },
+    {
+      "name": "password_reset_tokens",
+      "schemaName": "public",
+      "x": 345.4580078125,
+      "y": 50
+    },
+    {
+      "name": "sessions",
+      "schemaName": "public",
+      "x": 690.916015625,
+      "y": 50
+    },
+    {
+      "name": "personal_access_tokens",
+      "schemaName": "public",
+      "x": 1036.3740234375,
+      "y": 50
+    },
+    {
+      "name": "jobs",
+      "schemaName": "public",
+      "x": 1337.77783203125,
+      "y": 50
+    },
+    {
+      "name": "job_batches",
+      "schemaName": "public",
+      "x": 0,
+      "y": 516
+    },
+    {
+      "name": "failed_jobs",
+      "schemaName": "public",
+      "x": 345.4580078125,
+      "y": 228
+    },
+    {
+      "name": "cache",
+      "schemaName": "public",
+      "x": 690.916015625,
+      "y": 324
+    },
+    {
+      "name": "cache_locks",
+      "schemaName": "public",
+      "x": 1036.3740234375,
+      "y": 452
+    },
+    {
+      "name": "role_grants",
+      "schemaName": "public",
+      "x": 1337.77783203125,
+      "y": 356
+    },
+    {
+      "name": "access_logs",
+      "schemaName": "public",
+      "x": 0,
+      "y": 918
+    },
+    {
+      "name": "folders",
+      "schemaName": "public",
+      "x": 345.4580078125,
+      "y": 534
+    },
+    {
+      "name": "documents",
+      "schemaName": "public",
+      "x": 690.916015625,
+      "y": 502
+    },
+    {
+      "name": "comments",
+      "schemaName": "public",
+      "x": 1036.3740234375,
+      "y": 630
+    },
+    {
+      "name": "categories",
+      "schemaName": "public",
+      "x": 1337.77783203125,
+      "y": 694
+    },
+    {
+      "name": "tags",
+      "schemaName": "public",
+      "x": 0,
+      "y": 1448
+    },
+    {
+      "name": "folder_tag",
+      "schemaName": "public",
+      "x": 345.4580078125,
+      "y": 936
+    },
+    {
+      "name": "document_tag",
+      "schemaName": "public",
+      "x": 690.916015625,
+      "y": 1416
+    },
+    {
+      "name": "category_folder",
+      "schemaName": "public",
+      "x": 1036.3740234375,
+      "y": 968
+    },
+    {
+      "name": "notifications",
+      "schemaName": "public",
+      "x": 1337.77783203125,
+      "y": 904
+    },
+    {
+      "name": "share_documents",
+      "schemaName": "public",
+      "x": 0,
+      "y": 1754
+    },
+    {
+      "name": "file_requests",
+      "schemaName": "public",
+      "x": 345.4580078125,
+      "y": 1178
+    },
+    {
+      "name": "stego_carriers",
+      "schemaName": "public",
+      "x": 690.916015625,
+      "y": 1658
+    },
+    {
+      "name": "stego_documents",
+      "schemaName": "public",
+      "x": 1036.3740234375,
+      "y": 1210
+    },
+    {
+      "name": "stego_segments",
+      "schemaName": "public",
+      "x": 1337.77783203125,
+      "y": 1434
+    }
+  ],
+  "tableGroupCollapseStates": [],
+  "stickyNoteLayouts": [],
+  "referencePaths": [
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "role_grants",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "access_logs",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "folders",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "parent_id"
+      ],
+      "secondTableName": "folders",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "folders",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "folder_id"
+      ],
+      "secondTableName": "documents",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "owner_id"
+      ],
+      "secondTableName": "documents",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "documents",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "document_id"
+      ],
+      "secondTableName": "comments",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "comments",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "comments",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "parent_id"
+      ],
+      "secondTableName": "comments",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "categories",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "category_id"
+      ],
+      "secondTableName": "tags",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "folders",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "folder_id"
+      ],
+      "secondTableName": "folder_tag",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "tags",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "tag_id"
+      ],
+      "secondTableName": "folder_tag",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "documents",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "document_id"
+      ],
+      "secondTableName": "document_tag",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "tags",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "tag_id"
+      ],
+      "secondTableName": "document_tag",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "categories",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "category_id"
+      ],
+      "secondTableName": "category_folder",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "folders",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "folder_id"
+      ],
+      "secondTableName": "category_folder",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "folders",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "folder_id"
+      ],
+      "secondTableName": "file_requests",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "tags",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "tag_id"
+      ],
+      "secondTableName": "file_requests",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "uploaded_by"
+      ],
+      "secondTableName": "stego_carriers",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "documents",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "document_id"
+      ],
+      "secondTableName": "stego_documents",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "users",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "user_id"
+      ],
+      "secondTableName": "stego_documents",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "stego_documents",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "stego_document_id"
+      ],
+      "secondTableName": "stego_segments",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    },
+    {
+      "firstFieldNames": [
+        "id"
+      ],
+      "firstTableName": "stego_carriers",
+      "firstSchemaName": "public",
+      "firstRelation": "1",
+      "secondFieldNames": [
+        "stego_carrier_id"
+      ],
+      "secondTableName": "stego_segments",
+      "secondSchemaName": "public",
+      "secondRelation": "*",
+      "checkPoints": []
+    }
+  ]
+}

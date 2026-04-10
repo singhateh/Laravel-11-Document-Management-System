@@ -20,7 +20,12 @@ function submitUploadFormFolder() {
 
     var formData = new FormData();
     formData.append('folder_name', folderName);
-    formData.append('files[]', []);
+
+    if (!files || files.length === 0) {
+        alert('Please select at least one file to upload.');
+        return;
+    }
+
     for (let i = 0; i < files.length; i++) {
         formData.append('files[]', files[i]);
     }

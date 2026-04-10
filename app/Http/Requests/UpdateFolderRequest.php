@@ -11,7 +11,7 @@ class UpdateFolderRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -22,7 +22,9 @@ class UpdateFolderRequest extends FormRequest
     public function rules(): array
     {
         return [
-            //
+            'folder_name' => ['sometimes', 'string', 'max:255'],
+            'parent_id' => ['nullable', 'exists:folders,id'],
+            'visibility' => ['nullable', 'in:public,private'],
         ];
     }
 }

@@ -1,0 +1,57 @@
+# ==========================================
+# KILO CODE AI IGNORE FILE
+# Prevents agentic loops by hiding heavy/generated files
+# ==========================================
+
+# 1. Version Control & OS Files
+.git/
+.svn/
+.DS_Store
+Thumbs.db
+
+# 2. Node.js & Vue.js (Frontend)
+node_modules/
+dist/
+build/
+.output/
+.nuxt/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 3. Laravel & PHP (Backend)
+vendor/
+storage/
+bootstrap/cache/
+public/build/
+public/hot
+*.log
+
+# 4. Python (Scripts & Logic)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+.pytest_cache/
+
+# 5. Environment & Secrets (Crucial for Security)
+.env
+.env.*
+*.pem
+*.key
+
+# 6. IDEs & Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# 7. Compiled/Hardware Outputs 
+*.hex
+*.elf
+*.bin
+*.out

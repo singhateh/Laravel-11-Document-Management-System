@@ -17,14 +17,19 @@ class Folder extends Model
     {
         parent::boot();
 
-        // Define a global scope to always order by position
-        static::addGlobalScope('position', function ($builder) {
-            $builder->orderBy('position');
+        // Folders will be ordered alphabetically by name by default
+        static::addGlobalScope('name', function ($builder) {
+            $builder->orderBy('name', 'asc');
         });
 
         static::creating(function ($folder) {
             if (!isset($folder->position)) {
                 $folder->position = static::max('position') + 1;
+            }
+            
+            // Keep model default aligned with migration default.
+            if (!isset($folder->visibility)) {
+                $folder->visibility = 'public';
             }
         });
     }
@@ -42,7 +47,7 @@ class Folder extends Model
 
     public function tags()
     {
-        return $this->hasMany(Tag::class, 'id', 'tag_id');
+        return $this->morphToMany(Tag::class, 'taggable');
     }
 
     public function categories()
@@ -75,29 +80,23 @@ class Folder extends Model
             }
         }
 
-        // Delete related categories and associated tags
+        // Delete related categories; tags.category_id cascade removes their tags automatically.
         if ($this->relationLoaded('categories')) {
             foreach ($this->categories as $category) {
-                // Detach tags associated with the category
-                $category->tags()->detach();
-                // Delete the category
                 $category->delete();
             }
         } else {
             $this->load('categories');
             foreach ($this->categories as $category) {
-                // Detach tags associated with the category
-                $category->tags()->detach();
-                // Delete the category
                 $category->delete();
             }
         }
-        // Detach related tags
+        // Detach the folder's own tags from the taggables pivot.
         if ($this->relationLoaded('tags')) {
-            $this->tags()->delete();
+            $this->tags()->detach();
         } else {
             $this->load('tags');
-            $this->tags()->delete();
+            $this->tags()->detach();
         }
 
         // Check if the subfolders relationship is loaded

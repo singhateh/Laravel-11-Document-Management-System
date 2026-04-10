@@ -32,27 +32,32 @@ class FileRequestController extends Controller
      */
     public function store(StoreFileRequestRequest $request)
     {
-        // Create a new FileRequest instance
-        DB::beginTransaction();
+        $validated = $request->validated();
 
         try {
-            $requestFile = FileRequest::create($request->validated());
+            $requestFile = DB::transaction(function () use ($validated) {
+                $createdRequest = FileRequest::create($validated);
 
-            Document::create([
-                'name' => $requestFile->name,
-                'original_name' => $requestFile->name,
-                'folder_id' => $requestFile->folder_id,
-                'date' => $requestFile->created_at,
-                'file_path' => 'img/empty-upload.jpg',
-                'extension' => 'jpg',
-            ]);
+                Document::create([
+                    'name' => $createdRequest->name,
+                    'original_name' => $createdRequest->name,
+                    'folder_id' => $createdRequest->folder_id,
+                    'document_date' => $createdRequest->created_at,
+                    'file_path' => 'img/empty-upload.jpg',
+                    'extension' => 'jpg',
+                ]);
 
-            SendFileRequestEmail::dispatch($requestFile);
-            DB::commit();
+                SendFileRequestEmail::dispatch($createdRequest);
+
+                return $createdRequest;
+            });
+
             return response()->json(['url' => route('getFiles', $requestFile->folder_id)], 200);
         } catch (\Throwable $th) {
-            DB::rollBack();
-            return response()->json(['url' => route('getFiles', $requestFile->folder_id)], 200);
+            return response()->json([
+                'message' => 'Unable to create file request at this time.',
+                'error' => $th->getMessage(),
+            ], 500);
         }
     }
 

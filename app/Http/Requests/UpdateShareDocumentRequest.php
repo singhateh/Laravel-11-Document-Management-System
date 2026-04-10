@@ -11,7 +11,7 @@ class UpdateShareDocumentRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -22,7 +22,9 @@ class UpdateShareDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            //
+            'permission_level' => ['required', 'in:viewer,commenter,editor,co_owner,owner'],
+            'valid_until' => ['nullable', 'date', 'after:now'],
+            'visibility' => ['nullable', 'in:public,private'],
         ];
     }
 }
